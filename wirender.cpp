@@ -1,8 +1,8 @@
-#include "render.hpp"
+#include "wirender.hpp"
 #include <cassert>
 #include <iostream>
 
-using namespace render;
+using namespace wirender;
 
 #include <vulkan/vk_enum_string_helper.h>
 #if (defined __WIN32)
@@ -23,13 +23,14 @@ using namespace render;
     while(0);
 //(vkr__ == VK_PIPELINE_COMPILE_REQUIRED) || (vkr__ == VK_PIPELINE_BINARY_MISSING_KHR) || (vkr__ == VK_INCOMPATIBLE_SHADER_BINARY_EXT ) ||
 
-namespace render {
+namespace wirender {
     namespace RenderVulkanUtils {
         [[nodiscard]] physical_device_info choose_best_physical_device(VkPhysicalDevice* devices, uint32_t deviceCount);
         [[nodiscard]] queue_family_indices find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface);
         [[nodiscard]] VkRenderPass create_default_render_pass(VkDevice device, VkFormat imageFormat, const VkAllocationCallbacks* allocationCallbacks);
         VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData);
         [[nodiscard]] VkDebugUtilsMessengerCreateInfoEXT create_default_debug_messenger_create_info();
+        [[nodiscard]] uint32_t sizeof_vk_format(VkFormat); // in bytes
 
 
         static const char* deviceExtensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -384,6 +385,12 @@ shader_builder& shader_builder::add_stage(const shader_stage& newStage) {
     RENDER_ASSERT(createInfo.stageCount < RENDER_DEFAULT_MAX_VALUE, "out of createInfo.stages range");
     createInfo.stages[createInfo.stageCount] = newStage;
     ++createInfo.stageCount;
+    return *this;
+}
+shader_builder& shader_builder::add_vertex_input_attribute(const VkVertexInputAttributeDescription& newAttribute) {
+    RENDER_ASSERT(createInfo.stageCount < RENDER_DEFAULT_MAX_VALUE, "out of createInfo.vertexInputAtributes range");
+    createInfo.vertexInputAtributes[createInfo.stageCount] = newAttribute;
+    ++createInfo.vertexInputAtributeCount;
     return *this;
 }
 shader_builder& shader_builder::add_dynamic_state(VkDynamicState newState) {
@@ -853,6 +860,11 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
     const VkAllocationCallbacks* allocationCallbacks = 0;
     RENDER_ASSERT(createInfo.stageCount < RENDER_DEFAULT_MAX_VALUE, "too many stages");
     RENDER_ASSERT(createInfo.stageCount > 0, "no shader stages for shader programm");
+
+    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DEFAULT_MAX_VALUE, "too many dynamic states");
+
+    RENDER_ASSERT(createInfo.vertexInputAtributeCount < RENDER_DEFAULT_MAX_VALUE, "too many vertex input attributes");
+
     VkPipelineShaderStageCreateInfo shaderStages[RENDER_DEFAULT_MAX_VALUE];
 
     for (uint32_t i = 0; i < createInfo.stageCount; ++i) {
@@ -872,19 +884,14 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
         shaderStages[i].pName = "main";
         shaderStages[i].pSpecializationInfo = {};
     }
+    uint32_t inputSize = 0;
+    for (uint32_t i = 0; i < createInfo.vertexInputAtributeCount; ++i)
+        inputSize += RenderVulkanUtils::sizeof_vk_format(createInfo.vertexInputAtributes[i].format);
+        
     const VkVertexInputBindingDescription inputBinding {
         .binding = 0,
-        .stride = static_cast<uint32_t>(sizeof(float[2])),
+        .stride = inputSize,
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
-    };
-
-    const VkVertexInputAttributeDescription attributeDescriptions[] = {
-        VkVertexInputAttributeDescription {
-            .location = 0,
-            .binding = 0,
-            .format = VK_FORMAT_R32G32_SFLOAT,
-            .offset = 0,
-        },
     };
 
     const VkPipelineVertexInputStateCreateInfo vertexInputInfo {
@@ -893,8 +900,8 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
         .flags = (VkFlags)0,
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &inputBinding,
-        .vertexAttributeDescriptionCount = static_cast<uint32_t>(RENDER_ARRAY_SIZE(attributeDescriptions)),
-        .pVertexAttributeDescriptions = attributeDescriptions,
+        .vertexAttributeDescriptionCount = createInfo.vertexInputAtributeCount,
+        .pVertexAttributeDescriptions = createInfo.vertexInputAtributes,
     };
 
     const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
@@ -1182,4 +1189,115 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderVulkanUtils::debug_messenger_callback(VkDeb
         .pfnUserCallback = RenderVulkanUtils::debug_messenger_callback,
         .pUserData = nullptr,
     };
+}
+[[nodiscard]] uint32_t RenderVulkanUtils::sizeof_vk_format(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_UNORM:
+        case VK_FORMAT_R8_SNORM:
+        case VK_FORMAT_R8_USCALED:
+        case VK_FORMAT_R8_SSCALED:
+        case VK_FORMAT_R8_UINT:
+        case VK_FORMAT_R8_SINT:
+        case VK_FORMAT_R8_SRGB:
+            return 1u;
+        case VK_FORMAT_R8G8_UNORM:
+        case VK_FORMAT_R8G8_SNORM:
+        case VK_FORMAT_R8G8_USCALED:
+        case VK_FORMAT_R8G8_SSCALED:
+        case VK_FORMAT_R8G8_UINT:
+        case VK_FORMAT_R8G8_SINT:
+        case VK_FORMAT_R8G8_SRGB:
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16_SNORM:
+        case VK_FORMAT_R16_USCALED:
+        case VK_FORMAT_R16_SSCALED:
+        case VK_FORMAT_R16_UINT:
+        case VK_FORMAT_R16_SINT:
+        case VK_FORMAT_R16_SFLOAT:
+            return 2u;
+        case VK_FORMAT_R8G8B8_UNORM:
+        case VK_FORMAT_R8G8B8_SNORM:
+        case VK_FORMAT_R8G8B8_USCALED:
+        case VK_FORMAT_R8G8B8_SSCALED:
+        case VK_FORMAT_R8G8B8_UINT:
+        case VK_FORMAT_R8G8B8_SINT:
+        case VK_FORMAT_R8G8B8_SRGB:
+        case VK_FORMAT_B8G8R8_UNORM:
+        case VK_FORMAT_B8G8R8_SNORM:
+        case VK_FORMAT_B8G8R8_USCALED:
+        case VK_FORMAT_B8G8R8_SSCALED:
+        case VK_FORMAT_B8G8R8_UINT:
+        case VK_FORMAT_B8G8R8_SINT:
+        case VK_FORMAT_B8G8R8_SRGB:
+            return 3u;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SNORM:
+        case VK_FORMAT_R8G8B8A8_USCALED:
+        case VK_FORMAT_R8G8B8A8_SSCALED:
+        case VK_FORMAT_R8G8B8A8_UINT:
+        case VK_FORMAT_R8G8B8A8_SINT:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SNORM:
+        case VK_FORMAT_B8G8R8A8_USCALED:
+        case VK_FORMAT_B8G8R8A8_SSCALED:
+        case VK_FORMAT_B8G8R8A8_UINT:
+        case VK_FORMAT_B8G8R8A8_SINT:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16_SNORM:
+        case VK_FORMAT_R16G16_USCALED:
+        case VK_FORMAT_R16G16_SSCALED:
+        case VK_FORMAT_R16G16_UINT:
+        case VK_FORMAT_R16G16_SINT:
+        case VK_FORMAT_R16G16_SFLOAT:
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_R32_SINT:
+        case VK_FORMAT_R32_SFLOAT:
+            return 4u;
+        case VK_FORMAT_R16G16B16_UNORM:
+        case VK_FORMAT_R16G16B16_SNORM:
+        case VK_FORMAT_R16G16B16_USCALED:
+        case VK_FORMAT_R16G16B16_SSCALED:
+        case VK_FORMAT_R16G16B16_UINT:
+        case VK_FORMAT_R16G16B16_SINT:
+        case VK_FORMAT_R16G16B16_SFLOAT:
+            return 6u;
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R16G16B16A16_SNORM:
+        case VK_FORMAT_R16G16B16A16_USCALED:
+        case VK_FORMAT_R16G16B16A16_SSCALED:
+        case VK_FORMAT_R16G16B16A16_UINT:
+        case VK_FORMAT_R16G16B16A16_SINT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+        case VK_FORMAT_R32G32_UINT:
+        case VK_FORMAT_R32G32_SINT:
+        case VK_FORMAT_R32G32_SFLOAT:
+        case VK_FORMAT_R64_UINT:
+        case VK_FORMAT_R64_SINT:
+        case VK_FORMAT_R64_SFLOAT:
+            return 8u;
+        case VK_FORMAT_R32G32B32_UINT:
+        case VK_FORMAT_R32G32B32_SINT:
+        case VK_FORMAT_R32G32B32_SFLOAT:
+            return 12u;
+        case VK_FORMAT_R32G32B32A32_UINT:
+        case VK_FORMAT_R32G32B32A32_SINT:
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
+        case VK_FORMAT_R64G64_UINT:
+        case VK_FORMAT_R64G64_SINT:
+        case VK_FORMAT_R64G64_SFLOAT:
+            return 16u;
+        case VK_FORMAT_R64G64B64_UINT:
+        case VK_FORMAT_R64G64B64_SINT:
+        case VK_FORMAT_R64G64B64_SFLOAT:
+            return 24u;
+        case VK_FORMAT_R64G64B64A64_UINT:
+        case VK_FORMAT_R64G64B64A64_SINT:
+        case VK_FORMAT_R64G64B64A64_SFLOAT:
+            return 32u;
+        default:
+            return ~0u;
+    }
+    return ~0u;
 }
