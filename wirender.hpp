@@ -13,8 +13,8 @@
 #define RENDER_DEFAULT_MAX_VALUE 16
 #define RENDER_SWAPCHAIN_IMAGE_MAX_COUNT 8
 #define RENDER_DESCRIPTORS_MAX_VALUE 16
-namespace render {
-    //using namespace render::platform; LOL
+namespace wirender {
+    //using namespace wirender::platform; LOL
 
     namespace RenderVulkanUtils {
         struct swapchain_images {
@@ -185,6 +185,8 @@ namespace render {
         shader_stage stages[RENDER_DEFAULT_MAX_VALUE]{};
         uint32_t stageCount{0};
         VkDynamicState dynamicStates[RENDER_DEFAULT_MAX_VALUE]{VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_VIEWPORT};
+        uint32_t vertexInputAtributeCount{0};
+        VkVertexInputAttributeDescription vertexInputAtributes[RENDER_DEFAULT_MAX_VALUE]{};
         VkPrimitiveTopology primitiveTopology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
         uint32_t dynamicStateCount{2};
         float lineWidth{1.0f};
@@ -226,6 +228,7 @@ namespace render {
 
         public:
         shader_builder& add_stage(const shader_stage&);
+        shader_builder& add_vertex_input_attribute(const VkVertexInputAttributeDescription&);
         shader_builder& add_dynamic_state(VkDynamicState);
         shader_builder& pop_dynamic_state();
         shader_builder& set_primitive_topology(VkPrimitiveTopology);
