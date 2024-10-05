@@ -6,8 +6,8 @@ A small tool for drawing basic shapes using the Vulkan API.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
-- [License](#License)
-- [Acknowledgments](#Acknowledgments)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
 ## Features
 - **Basic Shape Rendering**: Render basic shapes using shaders and buffers.
