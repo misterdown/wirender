@@ -38,7 +38,7 @@ A small tool for drawing basic shapes using the Vulkan API.
 
 ## Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request. Because we all love fixing bugs and improving code.
+Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request. Because we all LOVE fixing bugs.
 
 ## License
 
