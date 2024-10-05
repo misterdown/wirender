@@ -24,7 +24,7 @@ A small tool for drawing basic shapes using the Vulkan API.
 1. **Install Vulkan SDK**: Download and install the Vulkan SDK from the [official website](https://www.lunarg.com/vulkan-sdk/). Because installing SDKs is the best part of development.
 2. **Clone the Repository**:
     ```sh
-    git clone https://github.com/yourusername/wirender.git
+    git clone https://github.com/misterdown/wirender.git
     cd wirender
     ```
 
