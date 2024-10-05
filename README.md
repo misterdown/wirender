@@ -34,8 +34,7 @@ A small tool for drawing basic shapes using the Vulkan API.
 2. **Create a Window**: Create a `window_info` object containing the necessary information for creating a window on your platform (Windows or Linux).
 3. **Initialize the Render Manager**: Create a `render_manager` object using the `window_info` object.
 4. **Create Shaders**: Use the `shader_builder` object to create and manage shaders.
-5. **Create Buffers**: Use the `buffer_builder` object to create and manage buffers and memory.
-6. **Render Shapes**: Use the `render_manager` object to render basic shapes using shaders and buffers.
+5. **Create Buffers**: Use the `buffer_builder` object to create vertex/index buffers.
 
 ## Contributing
 
