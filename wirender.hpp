@@ -1,21 +1,48 @@
+/*  wirender.hpp
+    MIT License
 
+    Copyright (c) 2024 Aidar Shigapov
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+*/
 #include <vulkan/vulkan.h>
 #if (defined __WIN32)
-#include <windows.h>
+#   include <windows.h>
 #else
-#include <X11/Xlib.h>
-//#include <X11/Xlib-xcb.h>
+#   include <X11/Xlib.h>
 //  use XLib for creating surface
-//#   error "NOT SUPPORTED"
 #endif
 
 #define RENDER_VK_INVALID_FAMILY_INDEX ~0u
-#define RENDER_DEFAULT_MAX_VALUE 16
+#define RENDER_DEFAULT_MAX_COUNT 16
+#define RENDER_UNIFORM_BUFFER_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
+#define RENDER_SAMPLED_IMAGE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
+#define RENDER_DYNAMIC_STATE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
+#define RENDER_INPUT_ATTRIBUTE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
+#define RENDER_STAGE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
 #define RENDER_SWAPCHAIN_IMAGE_MAX_COUNT 8
-#define RENDER_DESCRIPTORS_MAX_VALUE 16
-namespace wirender {
-    //using namespace wirender::platform; LOL
+#define RENDER_DESCRIPTOR_MAX_COUNT (RENDER_UNIFORM_BUFFER_MAX_COUNT + RENDER_SAMPLED_IMAGE_MAX_COUNT)
+#define RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT (RENDER_DESCRIPTOR_MAX_COUNT * 2)
 
+static_assert(RENDER_STAGE_MAX_COUNT >= 2, "RENDER_STAGE_MAX_COUNT must be more or equals 2");
+
+namespace wirender {
     namespace RenderVulkanUtils {
         struct swapchain_images {
             uint32_t imageCount;
@@ -77,9 +104,9 @@ namespace wirender {
         };
         struct active_shader_state {
             VkPipeline pipeline;
+            VkPipelineLayout layout;
             VkRenderPass renderPass;
-            uint32_t descriptorSetCount;
-            VkDescriptorSet* descriptorSets;
+            VkDescriptorSet descriptorSet;
         };
         struct binded_buffer_state {
             VkBuffer buffer;
@@ -88,9 +115,23 @@ namespace wirender {
             VkBuffer buffer;
             VkDeviceMemory memory;
         };
+        struct uniform_buffers_info {
+            VkDeviceMemory memory; // single memory block for each buffer but with different offsets
+            struct {
+                VkBuffer buffer;
+                VkDeviceSize size;
+            } buffers[RENDER_UNIFORM_BUFFER_MAX_COUNT]{};
+        };
         struct sync_object {
             VkFence fence;
             VkSemaphore semaphore;
+        };
+        struct public_spirv_variable_declaration {
+            uint32_t binding;
+            uint32_t descriptorSet;
+            uint32_t size;
+            uint32_t type;
+            VkShaderStageFlagBits stageFlags;
         };
     };
     struct shader_stage final {
@@ -151,8 +192,9 @@ namespace wirender {
         render_manager& bind_buffer(const RenderVulkanUtils::binded_buffer_state& bufferState);
         render_manager& wait_executing();
         render_manager& start_record();
-        //render_manager& record_set_topology(VkPrimitiveTopology); // not supported yet
-        //render_manager& record_set_polygon_move(VkPolygonMode);   // not supported yet
+        //render_manager& record_set_topology(VkPrimitiveTopology); not supported yet
+        //render_manager& record_set_polygon_move(VkPolygonMode);
+        //render_manager& record_set_cull_mode(VkCullModeFlagBits);
         render_manager& record_update_viewport();
         render_manager& record_update_scissor();
         render_manager& record_start_render();
@@ -182,19 +224,25 @@ namespace wirender {
         void intitialize_sync_object(RenderVulkanUtils::sync_object&) const;
     };
     struct shader_create_info {
-        shader_stage stages[RENDER_DEFAULT_MAX_VALUE]{};
+        shader_stage stages[RENDER_STAGE_MAX_COUNT]{};
         uint32_t stageCount{0};
-        VkDynamicState dynamicStates[RENDER_DEFAULT_MAX_VALUE]{VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_VIEWPORT};
-        uint32_t vertexInputAtributeCount{0};
-        VkVertexInputAttributeDescription vertexInputAtributes[RENDER_DEFAULT_MAX_VALUE]{};
+        VkDynamicState dynamicStates[RENDER_DYNAMIC_STATE_MAX_COUNT]{VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_VIEWPORT};
+        uint32_t vertexInputAttributeCount{0};
+        VkVertexInputAttributeDescription vertexInputAtributes[RENDER_INPUT_ATTRIBUTE_MAX_COUNT]{};
         VkPrimitiveTopology primitiveTopology{VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
         uint32_t dynamicStateCount{2};
-        float lineWidth{1.0f};
         VkPolygonMode polygonMode{VK_POLYGON_MODE_FILL};
+        VkSampleCountFlagBits rasterizationSampleCount{VK_SAMPLE_COUNT_1_BIT};
+        VkCullModeFlagBits cullMode{VK_CULL_MODE_NONE};
+        float lineWidth{1.0f};
     };
     struct shader final {
         private:
         render_manager* owner;
+        RenderVulkanUtils::uniform_buffers_info uniformBuffers;
+        VkDescriptorPool descriptorPool;
+        VkDescriptorSetLayout descriptorSetLayout;
+        VkDescriptorSet descriptorSet;
         VkRenderPass renderPass;
         VkPipelineLayout pipelineLayout;
         VkPipeline pipeline;
@@ -213,6 +261,10 @@ namespace wirender {
         void set_members_zero();
 
         private:
+        [[nodiscard]] VkDescriptorPool create_descriptor_pool(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t) const;
+        [[nodiscard]] RenderVulkanUtils::uniform_buffers_info create_uniform_buffers(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t) const;
+        [[nodiscard]] VkDescriptorSetLayout create_descriptor_set_layout(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t);
+        [[nodiscard]] VkDescriptorSet create_descriptor_set(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t);
         [[nodiscard]] VkRenderPass create_render_pass() const;
         [[nodiscard]] VkPipelineLayout create_pipeline_layout() const;
         [[nodiscard]] VkPipeline create_pipeline(const shader_create_info&) const;
@@ -234,6 +286,8 @@ namespace wirender {
         shader_builder& set_primitive_topology(VkPrimitiveTopology);
         shader_builder& set_line_width(float);
         shader_builder& set_polygon_mode(VkPolygonMode);
+        shader_builder& set_rasterization_sample_count(VkSampleCountFlagBits);
+        shader_builder& set_cull_mode(VkCullModeFlagBits);
         [[nodiscard]] shader build() const;
     };
     struct buffer_create_info {

@@ -1,15 +1,37 @@
+/*  wirender.cpp
+    MIT License
+
+    Copyright (c) 2024 Aidar Shigapov
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+*/
 #include "wirender.hpp"
 #include <cassert>
 #include <iostream>
-
-using namespace wirender;
-
-#include <vulkan/vk_enum_string_helper.h>
+#include <unordered_map>
+//#include <vk_enum_string_helper.h>
 #if (defined __WIN32)
 #   include <vulkan/vulkan_win32.h>
 #else
 #   include <vulkan/vulkan_xlib.h>
 #endif
+using namespace wirender;
 
 #define RENDER_ASSERT(expr__, msg) do { if ((expr__) == 0) { _assert(msg, __FILE__, __LINE__); } } while(0)
 #define RENDER_ARRAY_SIZE(arr__) (sizeof(arr__) / sizeof(arr__[0])) 
@@ -19,7 +41,7 @@ using namespace wirender;
         (vkr__ == VK_SUCCESS) || (vkr__ == VK_NOT_READY) || (vkr__ == VK_TIMEOUT) ||\
         (vkr__ == VK_EVENT_SET) || (vkr__ == VK_EVENT_RESET) || (vkr__ == VK_INCOMPLETE ) ||\
         (vkr__ == VK_SUBOPTIMAL_KHR ) || (vkr__ == VK_THREAD_IDLE_KHR ) || (vkr__ == VK_THREAD_DONE_KHR) ||\
-        (vkr__ == VK_OPERATION_DEFERRED_KHR) || (vkr__ == VK_OPERATION_NOT_DEFERRED_KHR) || (vkr__ == VK_THREAD_DONE_KHR), string_VkResult(vkr__));}\
+        (vkr__ == VK_OPERATION_DEFERRED_KHR) || (vkr__ == VK_OPERATION_NOT_DEFERRED_KHR) || (vkr__ == VK_THREAD_DONE_KHR), /*string_VkResult(vkr__)*/ "demn");}\
     while(0);
 //(vkr__ == VK_PIPELINE_COMPILE_REQUIRED) || (vkr__ == VK_PIPELINE_BINARY_MISSING_KHR) || (vkr__ == VK_INCOMPATIBLE_SHADER_BINARY_EXT ) ||
 
@@ -31,6 +53,8 @@ namespace wirender {
         VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData);
         [[nodiscard]] VkDebugUtilsMessengerCreateInfoEXT create_default_debug_messenger_create_info();
         [[nodiscard]] uint32_t sizeof_vk_format(VkFormat); // in bytes
+        [[nodiscard]] uint32_t find_memory_type(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
+        void analyze_spirv(const uint32_t* code, uint32_t codeSize, VkShaderStageFlagBits stageFlags, RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t& variableCount);
 
 
         static const char* deviceExtensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -58,9 +82,9 @@ render_manager::render_manager(const window_info& windowInfo) :
         currentShader{},
         bindedBuffer{},
         imageIndex(0),
-        validationEnable(false)   {
+        validationEnable(true) {
 
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     vulkanInstance = create_vulkan_instance();
 
@@ -109,7 +133,7 @@ render_manager::render_manager(render_manager&& other) :
 }
 
 render_manager::~render_manager() {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     vkDeviceWaitIdle(logicalDevice);
     if (syncObject.semaphore != 0)
@@ -204,6 +228,8 @@ render_manager& render_manager::record_start_render() {
             .pClearValues = &clearVal,
         };
         vkCmdBeginRenderPass(commandBuffers[i], &beginRenderPassInfo, {});
+
+        vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, currentShader.layout, 0, 1, &currentShader.descriptorSet, 0, nullptr );
     }
 
     return *this;
@@ -256,7 +282,7 @@ render_manager& render_manager::end_record() {
     return *this;
 }
 render_manager& render_manager::resize() {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     destroy_swapchain_images(swapchainImages);
     if (swapchain != 0)
@@ -343,12 +369,21 @@ void render_manager::set_members_zero() {
 shader::shader(render_manager* owner_, const shader_create_info& createInfo) : owner(owner_) {
     RENDER_ASSERT(owner != nullptr, "owner pointer does not valid");
 
+    RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT];
+    uint32_t publicDeclCount = 0;
+    for (uint32_t stageI = 0; stageI < createInfo.stageCount; ++stageI) {
+        RenderVulkanUtils::analyze_spirv(createInfo.stages[stageI].code, createInfo.stages[stageI].codeSize, createInfo.stages[stageI].stage, publicDecls, publicDeclCount);
+    }
+    descriptorPool = create_descriptor_pool(createInfo, publicDecls, publicDeclCount);
+    uniformBuffers = create_uniform_buffers(createInfo, publicDecls, publicDeclCount);
+    descriptorSetLayout = create_descriptor_set_layout(createInfo, publicDecls, publicDeclCount);
+    descriptorSet = create_descriptor_set(createInfo, publicDecls, publicDeclCount);
     renderPass = create_render_pass();
     pipelineLayout = create_pipeline_layout();
     pipeline = create_pipeline(createInfo);
 }
 shader::~shader() {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     if (owner == nullptr)
         return;
@@ -361,20 +396,35 @@ shader::~shader() {
         vkDestroyPipelineLayout(owner->logicalDevice, pipelineLayout, allocationCallbacks);
     if (renderPass != 0)
         vkDestroyRenderPass(owner->logicalDevice, renderPass, allocationCallbacks);
+    if (descriptorSetLayout)
+        vkDestroyDescriptorSetLayout(owner->logicalDevice, descriptorSetLayout, allocationCallbacks);
+    for (auto i : uniformBuffers.buffers)
+        if (i.buffer)
+            vkDestroyBuffer(owner->logicalDevice, i.buffer, allocationCallbacks);
+    if (uniformBuffers.memory)
+        vkFreeMemory(owner->logicalDevice, uniformBuffers.memory, allocationCallbacks);
+    if (descriptorPool)
+        vkDestroyDescriptorPool(owner->logicalDevice, descriptorPool, allocationCallbacks);
+    
     set_members_zero();
 }
 [[nodiscard]] RenderVulkanUtils::active_shader_state shader::get_state() const {
-    return RenderVulkanUtils::active_shader_state{
+    return RenderVulkanUtils::active_shader_state {
         .pipeline = pipeline,
+        .layout = pipelineLayout,
         .renderPass = renderPass,
-        .descriptorSetCount = 0,
-        .descriptorSets = nullptr,
+        .descriptorSet = descriptorSet,
     };
 }
 void shader::set_members_zero() {
     renderPass = 0;
     pipelineLayout = 0;
     pipeline = 0;
+    descriptorSetLayout = 0;
+    for (auto& i : uniformBuffers.buffers)
+        i.buffer = 0;
+    uniformBuffers.memory = 0;
+    descriptorPool = 0;
 }
 shader_builder::shader_builder(render_manager* owner_) : owner(owner_), createInfo{} {
     RENDER_ASSERT(owner != nullptr, "owner pointer does not valid");
@@ -382,19 +432,19 @@ shader_builder::shader_builder(render_manager* owner_) : owner(owner_), createIn
 shader_builder& shader_builder::add_stage(const shader_stage& newStage) {
     //RENDER_ASSERT(newStage.code != nullptr, "code pointer is nullptr");
     //RENDER_ASSERT(newStage.codeSize > 4, "code size too small");
-    RENDER_ASSERT(createInfo.stageCount < RENDER_DEFAULT_MAX_VALUE, "out of createInfo.stages range");
+    RENDER_ASSERT(createInfo.stageCount < RENDER_STAGE_MAX_COUNT, "out of createInfo.stages range");
     createInfo.stages[createInfo.stageCount] = newStage;
     ++createInfo.stageCount;
     return *this;
 }
 shader_builder& shader_builder::add_vertex_input_attribute(const VkVertexInputAttributeDescription& newAttribute) {
-    RENDER_ASSERT(createInfo.stageCount < RENDER_DEFAULT_MAX_VALUE, "out of createInfo.vertexInputAtributes range");
-    createInfo.vertexInputAtributes[createInfo.stageCount] = newAttribute;
-    ++createInfo.vertexInputAtributeCount;
+    RENDER_ASSERT(createInfo.vertexInputAttributeCount < RENDER_INPUT_ATTRIBUTE_MAX_COUNT, "out of createInfo.vertexInputAtributes range");
+    createInfo.vertexInputAtributes[createInfo.vertexInputAttributeCount] = newAttribute;
+    ++createInfo.vertexInputAttributeCount;
     return *this;
 }
 shader_builder& shader_builder::add_dynamic_state(VkDynamicState newState) {
-    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DEFAULT_MAX_VALUE, "out of createInfo.dynamicStateCount range");
+    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DYNAMIC_STATE_MAX_COUNT, "out of createInfo.dynamicStateCount range");
     createInfo.dynamicStates[createInfo.dynamicStateCount] = newState;
     ++createInfo.dynamicStateCount;
     return *this;
@@ -416,13 +466,21 @@ shader_builder& shader_builder::set_polygon_mode(VkPolygonMode newPolygonMode) {
     createInfo.polygonMode = newPolygonMode;
     return *this;
 }
+shader_builder& shader_builder::set_rasterization_sample_count(VkSampleCountFlagBits newSampleCount) {
+    createInfo.rasterizationSampleCount = newSampleCount;
+    return *this;
+}
+shader_builder& shader_builder::set_cull_mode(VkCullModeFlagBits newCullMode) {
+    createInfo.cullMode = newCullMode;
+    return *this;
+}
 [[nodiscard]] shader shader_builder::build() const {
     return shader(owner, createInfo);
 }
 buffer_host_mapped_memory::buffer_host_mapped_memory(render_manager* owner_, const buffer_create_info& createInfo) : owner(owner_), size(createInfo.size), buffer{}, usage(createInfo.usage) {
     RENDER_ASSERT(owner != nullptr, "owner pointer does not valid");
 
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkBufferCreateInfo bufferCreateInfo {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -440,14 +498,17 @@ buffer_host_mapped_memory::buffer_host_mapped_memory(render_manager* owner_, con
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .pNext = nullptr,
         .allocationSize = size,
-        .memoryTypeIndex = 5, // for now TODO
+        .memoryTypeIndex = RenderVulkanUtils::find_memory_type(owner->physicalDevice, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
     };
+    // Я не знаю, как будет использоваться буффер, так что придётся указать все возможные варианты,
+    // Так-же, "VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT" может не существовать
+    // Но "VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT" может существовать и нормально работать, когда его используют как вертексный буффер
     RENDER_VK_CHECK(vkAllocateMemory(owner->logicalDevice, &memoryAllocationInfo, allocationCallbacks, &buffer.memory));
 
     RENDER_VK_CHECK(vkBindBufferMemory(owner->logicalDevice, buffer.buffer, buffer.memory, 0));
 }
 buffer_host_mapped_memory::~buffer_host_mapped_memory() {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     if (owner == nullptr)
         return;
@@ -480,7 +541,7 @@ void buffer_host_mapped_memory::set_members_zero() {
 /*GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG*/
 /*GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG*/
 [[nodiscard]] VkInstance render_manager::create_vulkan_instance() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkDebugUtilsMessengerCreateInfoEXT dbgMessengerCreateInfo = RenderVulkanUtils::create_default_debug_messenger_create_info();
 
@@ -510,7 +571,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     return newInstance;
 }
 [[nodiscard]] VkDebugUtilsMessengerEXT render_manager::create_debug_messenger() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     VkDebugUtilsMessengerEXT newDebugMessenger = 0;
     auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(vulkanInstance,"vkCreateDebugUtilsMessengerEXT");
@@ -521,19 +582,19 @@ void buffer_host_mapped_memory::set_members_zero() {
     return newDebugMessenger;
 }
 [[nodiscard]] RenderVulkanUtils::physical_device_info render_manager::get_physical_device() const {
-    VkPhysicalDevice devices[RENDER_DEFAULT_MAX_VALUE] = {};
+    VkPhysicalDevice devices[RENDER_DEFAULT_MAX_COUNT] = {};
     uint32_t deviceCount = 0;
     RENDER_VK_CHECK(vkEnumeratePhysicalDevices(vulkanInstance, &deviceCount, 0));
     RENDER_ASSERT(deviceCount > 0, "passed zero devices");
-    if (deviceCount > RENDER_DEFAULT_MAX_VALUE)
-        deviceCount = RENDER_DEFAULT_MAX_VALUE;
+    if (deviceCount > RENDER_DEFAULT_MAX_COUNT)
+        deviceCount = RENDER_DEFAULT_MAX_COUNT;
     RENDER_VK_CHECK(vkEnumeratePhysicalDevices(vulkanInstance, &deviceCount, devices));
 
     return RenderVulkanUtils::choose_best_physical_device(devices, deviceCount);
 }
 #if (defined __WIN32)
 [[nodiscard]] VkSurfaceKHR render_manager::create_surface() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     RENDER_ASSERT(windowInfo.hwnd != 0, "invalid hwnd");
     RENDER_ASSERT(windowInfo.hInstance != 0, "invalid hwnd");
@@ -552,7 +613,7 @@ void buffer_host_mapped_memory::set_members_zero() {
 }
 #else
 [[nodiscard]] VkSurfaceKHR render_manager::create_surface() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     RENDER_ASSERT(windowInfo.dpy != 0, "invalid display");
     RENDER_ASSERT(windowInfo.window != 0, "invalid window");
@@ -576,7 +637,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     return queueIndeces;
 }
 [[nodiscard]] RenderVulkanUtils::logical_device_info render_manager::create_logical_device() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     VkDeviceQueueCreateInfo queueCreateInfos[2];
 
@@ -613,19 +674,19 @@ void buffer_host_mapped_memory::set_members_zero() {
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &newSwapchainSupportInfo.capabilities));
 
     uint32_t formatCount = 0;
-    VkSurfaceFormatKHR formats[RENDER_DEFAULT_MAX_VALUE] = {};
+    VkSurfaceFormatKHR formats[RENDER_DEFAULT_MAX_COUNT] = {};
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr));
     RENDER_ASSERT(formatCount > 0, "no supported formats found");
-    if (formatCount > RENDER_DEFAULT_MAX_VALUE)
-        formatCount = RENDER_DEFAULT_MAX_VALUE;
+    if (formatCount > RENDER_DEFAULT_MAX_COUNT)
+        formatCount = RENDER_DEFAULT_MAX_COUNT;
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats));
 
     uint32_t presentModeCount = 0;
-    VkPresentModeKHR presentModes[RENDER_DEFAULT_MAX_VALUE] = {};
+    VkPresentModeKHR presentModes[RENDER_DEFAULT_MAX_COUNT] = {};
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
     RENDER_ASSERT(presentModeCount > 0, "no supported present modes");
-    if (presentModeCount > RENDER_DEFAULT_MAX_VALUE)
-        presentModeCount = RENDER_DEFAULT_MAX_VALUE;
+    if (presentModeCount > RENDER_DEFAULT_MAX_COUNT)
+        presentModeCount = RENDER_DEFAULT_MAX_COUNT;
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes));
 
     newSwapchainSupportInfo.imageFormat = formats[0];
@@ -654,7 +715,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     return newSwapchainSupportInfo;
 }
 [[nodiscard]] VkSwapchainKHR render_manager::create_swapchain() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkSwapchainCreateInfoKHR swapchainCreateInfo {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -682,7 +743,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     return newSwapchain;
 }
 void render_manager::initialize_swapchain_images(RenderVulkanUtils::swapchain_images& swapchainImagesToInitialize) const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     RENDER_VK_CHECK(vkGetSwapchainImagesKHR(logicalDevice, swapchain, &swapchainImagesToInitialize.imageCount, nullptr));
     RENDER_ASSERT(swapchainImagesToInitialize.imageCount > 0, "no images from swapchain");
@@ -729,7 +790,7 @@ void render_manager::initialize_swapchain_images(RenderVulkanUtils::swapchain_im
     }
 }
 [[nodiscard]] VkCommandPool render_manager::create_command_pool() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkCommandPoolCreateInfo commandPoolCreateInfo {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -754,7 +815,7 @@ void render_manager::allocate_command_buffers(VkCommandBuffer commandBuffersToAl
     RENDER_VK_CHECK(vkAllocateCommandBuffers(logicalDevice, &commandBuuferAllocateInfo, commandBuffersToAllocate));
 }
 void render_manager::destroy_swapchain_images(RenderVulkanUtils::swapchain_images& swapchainImagesToDestroy) const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     for (uint32_t i = 0; i < swapchainImagesToDestroy.imageCount; ++i) {
         if (swapchainImagesToDestroy.framebuffers[i] != 0)
@@ -764,7 +825,7 @@ void render_manager::destroy_swapchain_images(RenderVulkanUtils::swapchain_image
     }
 }
 void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syncObjectsToInitialize) const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkFenceCreateInfo fenceInfo {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -780,8 +841,169 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
     };
     RENDER_VK_CHECK(vkCreateSemaphore(logicalDevice, &semapforeInfo, allocationCallbacks, &syncObjectsToInitialize.semaphore));
 }
+uint16_t getOpcode(uint32_t word) {
+    return word & 0xFFFF;
+}
+uint16_t getWordCount(uint32_t word) {
+    return (word >> 16) & 0xFFFF;
+}
+[[nodiscard]] VkDescriptorPool shader::create_descriptor_pool(const shader_create_info& createInfo, const RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t publicDeclCount) const {
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
+
+    VkDescriptorPoolSize poolSizes[RENDER_DESCRIPTOR_MAX_COUNT]{};
+    uint32_t poolSizeCount = 0;
+    for (uint32_t i = 0; i < publicDeclCount; ++i) {
+        const auto& pubDecl = publicDecls[i];
+        if (pubDecl.type == 2/*Uniform*/) {
+            poolSizes[poolSizeCount].descriptorCount = 1;
+            poolSizes[poolSizeCount].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            ++poolSizeCount;
+        } else if (pubDecl.type == 11/*Image*/) {
+            poolSizes[poolSizeCount].descriptorCount = 1;
+            poolSizes[poolSizeCount].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            ++poolSizeCount;
+        } else if (pubDecl.type == 12/*StorageBuffer*/) {
+            poolSizes[poolSizeCount].descriptorCount = 1;
+            poolSizes[poolSizeCount].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            ++poolSizeCount;
+        }
+        RENDER_ASSERT(poolSizeCount < RENDER_DESCRIPTOR_MAX_COUNT, "poolSizeCount >= RENDER_DESCRIPTOR_MAX_COUNT");
+    }
+    const VkDescriptorPoolCreateInfo descriptorPoolCreateInfo {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = (VkFlags)0,
+        .maxSets = 1,
+        .poolSizeCount = poolSizeCount,
+        .pPoolSizes = poolSizes,
+    };
+    VkDescriptorPool result;
+    RENDER_VK_CHECK(vkCreateDescriptorPool(owner->logicalDevice, &descriptorPoolCreateInfo, allocationCallbacks, &result));
+    return result;
+}
+[[nodiscard]] RenderVulkanUtils::uniform_buffers_info shader::create_uniform_buffers(const shader_create_info& createInfo, const RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t publicDeclCount) const {
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
+
+    RenderVulkanUtils::uniform_buffers_info result;
+    for (uint32_t i = 0; i < publicDeclCount; ++i) {
+        const auto& pubDecl = publicDecls[i];
+        if (pubDecl.type != 2/*Uniform*/)
+            continue;
+        RENDER_ASSERT(pubDecl.binding < RENDER_UNIFORM_BUFFER_MAX_COUNT, "uniform buffer binding >= RENDER_UNIFORM_BUFFER_MAX_COUNT");
+        RENDER_ASSERT(result.buffers[pubDecl.binding].size == 0, "this binding defined twice or more times");
+        result.buffers[pubDecl.binding].size = pubDecl.size;  
+    }
+    
+    VkDeviceSize totalBufferSize = 0;
+    for (uint32_t i = 0; i < RENDER_UNIFORM_BUFFER_MAX_COUNT; ++i)
+        totalBufferSize += result.buffers[i].size;
+    totalBufferSize = totalBufferSize < 128 ? 128 : totalBufferSize; // 128 - common minimal allocated memory size
+
+    const VkMemoryAllocateInfo allocationInfo {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = totalBufferSize,
+        .memoryTypeIndex = RenderVulkanUtils::find_memory_type(owner->physicalDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+    };
+    RENDER_VK_CHECK(vkAllocateMemory(owner->logicalDevice, &allocationInfo, allocationCallbacks, &result.memory));
+
+    VkDeviceSize offset = 0;
+    for (uint32_t i = 0; i < RENDER_UNIFORM_BUFFER_MAX_COUNT; ++i)  {
+        if (result.buffers[i].size == 0)
+            continue;
+        
+        const VkBufferCreateInfo bufferCreateInfo {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = (VkFlags)0, //VK_BUFFER_CREATE_SPARSE_ALIASED_BIT | VK_BUFFER_CREATE_SPARSE_BINDING_BIT,
+            .size = result.buffers[i].size,
+            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 1,
+            .pQueueFamilyIndices = &owner->physicalDevice.queueIndeces.graphicsFamily,
+        };
+
+        RENDER_VK_CHECK(vkCreateBuffer(owner->logicalDevice, &bufferCreateInfo, allocationCallbacks, &result.buffers[i].buffer));
+        RENDER_VK_CHECK(vkBindBufferMemory(owner->logicalDevice, result.buffers[i].buffer, result.memory, offset));
+        
+        offset += result.buffers[i].size;
+    }
+    return result;
+}
+[[nodiscard]] VkDescriptorSetLayout shader::create_descriptor_set_layout(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t publicDeclCount) {
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
+
+    VkDescriptorSetLayoutBinding bindings[RENDER_DESCRIPTOR_MAX_COUNT];
+    uint32_t bindingCount = 0;
+    for (uint32_t i = 0; i < publicDeclCount; ++i) {
+        VkDescriptorSetLayoutBinding& binding = bindings[bindingCount];
+        binding.binding = publicDecls[i].binding;
+        binding.stageFlags = publicDecls[i].stageFlags;
+        binding.descriptorCount = 1;
+        binding.pImmutableSamplers = nullptr;
+
+        if (publicDecls[i].type == 2/*Uniform*/) {
+            binding.descriptorType =  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        } else if (publicDecls[i].type == 11/*Image*/) {
+            binding.descriptorType =  VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        } else if (publicDecls[i].type == 12/*StorageBuffer*/) {
+            binding.descriptorType =  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        } else {
+            continue;
+        }
+        ++bindingCount;
+    }
+
+    const VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = (VkFlags)0,
+        .bindingCount = bindingCount,
+        .pBindings = bindings,
+    };
+    VkDescriptorSetLayout result;
+    RENDER_VK_CHECK(vkCreateDescriptorSetLayout(owner->logicalDevice, &descriptorSetLayoutCreateInfo, allocationCallbacks, &result));
+    return result;
+}
+[[nodiscard]] VkDescriptorSet shader::create_descriptor_set(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t publicDeclCount) {
+    const VkDescriptorSetAllocateInfo allocationInfo {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .descriptorPool = descriptorPool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &descriptorSetLayout,
+    };
+    VkDescriptorSet result;
+    RENDER_VK_CHECK(vkAllocateDescriptorSets(owner->logicalDevice, &allocationInfo, &result));
+
+    for (uint32_t i = 0; i < publicDeclCount; ++i) {
+        const VkDescriptorBufferInfo bufferInfo {
+            .buffer = uniformBuffers.buffers[publicDecls[i].binding].buffer,
+            .offset = 0,
+            .range = uniformBuffers.buffers[publicDecls[i].binding].size,
+        };
+        const VkWriteDescriptorSet write = {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = result,
+            .dstBinding = publicDecls[i].binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType =   (publicDecls[i].type == 2/*Uniform*/) ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER :
+                                (publicDecls[i].type == 11/*Image*/) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE :
+                                (publicDecls[i].type == 12/*StorageBuffer*/) ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER :
+                                VK_DESCRIPTOR_TYPE_MAX_ENUM,
+            .pImageInfo = (publicDecls[i].type == 11/*Image*/) ? nullptr : nullptr, // TODO
+            .pBufferInfo = ((publicDecls[i].type == 2/*Uniform*/) || (publicDecls[i].type == 12/*StorageBuffer*/)) ? &bufferInfo : nullptr,
+            .pTexelBufferView = nullptr,
+        };
+
+        vkUpdateDescriptorSets(owner->logicalDevice, 1, &write, 0, nullptr);
+    }
+    return result;
+}
 [[nodiscard]] VkRenderPass shader::create_render_pass() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkAttachmentDescription colorAttachment {
         .flags = (VkFlags)0,
@@ -840,14 +1062,14 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
     return newRenderPass;
 }
 [[nodiscard]] VkPipelineLayout shader::create_pipeline_layout() const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .pNext = nullptr,
         .flags = (VkFlags)0,
-        .setLayoutCount = 0,//1,
-        .pSetLayouts = nullptr,//&descriptorSetLayout,
+        .setLayoutCount = descriptorSetLayout ? 1u : 0u,
+        .pSetLayouts = descriptorSetLayout ? &descriptorSetLayout : nullptr,
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = nullptr,
     };
@@ -857,15 +1079,15 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
     return newPipelineLayout;
 }
 [[nodiscard]] VkPipeline shader::create_pipeline(const shader_create_info& createInfo) const {
-    const VkAllocationCallbacks* allocationCallbacks = 0;
-    RENDER_ASSERT(createInfo.stageCount < RENDER_DEFAULT_MAX_VALUE, "too many stages");
+    const VkAllocationCallbacks* allocationCallbacks = nullptr;
+    RENDER_ASSERT(createInfo.stageCount < RENDER_STAGE_MAX_COUNT, "too many stages");
     RENDER_ASSERT(createInfo.stageCount > 0, "no shader stages for shader programm");
 
-    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DEFAULT_MAX_VALUE, "too many dynamic states");
+    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DYNAMIC_STATE_MAX_COUNT, "too many dynamic states");
 
-    RENDER_ASSERT(createInfo.vertexInputAtributeCount < RENDER_DEFAULT_MAX_VALUE, "too many vertex input attributes");
+    RENDER_ASSERT(createInfo.vertexInputAttributeCount < RENDER_INPUT_ATTRIBUTE_MAX_COUNT, "too many vertex input attributes");
 
-    VkPipelineShaderStageCreateInfo shaderStages[RENDER_DEFAULT_MAX_VALUE];
+    VkPipelineShaderStageCreateInfo shaderStages[RENDER_DEFAULT_MAX_COUNT];
 
     for (uint32_t i = 0; i < createInfo.stageCount; ++i) {
         const VkShaderModuleCreateInfo shaderModuleCreateInfo {
@@ -885,9 +1107,9 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
         shaderStages[i].pSpecializationInfo = {};
     }
     uint32_t inputSize = 0;
-    for (uint32_t i = 0; i < createInfo.vertexInputAtributeCount; ++i)
+    for (uint32_t i = 0; i < createInfo.vertexInputAttributeCount; ++i)
         inputSize += RenderVulkanUtils::sizeof_vk_format(createInfo.vertexInputAtributes[i].format);
-        
+
     const VkVertexInputBindingDescription inputBinding {
         .binding = 0,
         .stride = inputSize,
@@ -900,7 +1122,7 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
         .flags = (VkFlags)0,
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &inputBinding,
-        .vertexAttributeDescriptionCount = createInfo.vertexInputAtributeCount,
+        .vertexAttributeDescriptionCount = createInfo.vertexInputAttributeCount,
         .pVertexAttributeDescriptions = createInfo.vertexInputAtributes,
     };
 
@@ -937,7 +1159,7 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
         .depthClampEnable = VK_FALSE,
         .rasterizerDiscardEnable = VK_FALSE,
         .polygonMode = createInfo.polygonMode,
-        .cullMode = VK_CULL_MODE_NONE,//VK_CULL_MODE_BACK_BIT,
+        .cullMode = createInfo.cullMode,//VK_CULL_MODE_BACK_BIT,
         .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = VK_FALSE,
         .depthBiasConstantFactor = 0,
@@ -950,8 +1172,8 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .pNext = nullptr,
         .flags = (VkFlags)0,
-        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-        .sampleShadingEnable = VK_FALSE,
+        .rasterizationSamples = createInfo.rasterizationSampleCount,
+        .sampleShadingEnable = createInfo.rasterizationSampleCount != VK_SAMPLE_COUNT_1_BIT,
         .minSampleShading = 0,
         .pSampleMask = 0,
         .alphaToCoverageEnable = VK_FALSE,
@@ -1084,11 +1306,11 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
 }
 [[nodiscard]] RenderVulkanUtils::queue_family_indices RenderVulkanUtils::find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
     RenderVulkanUtils::queue_family_indices indices;
-    VkQueueFamilyProperties queueFamilies[RENDER_DEFAULT_MAX_VALUE] = {};
+    VkQueueFamilyProperties queueFamilies[RENDER_DEFAULT_MAX_COUNT] = {};
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-    if (queueFamilyCount > RENDER_DEFAULT_MAX_VALUE)
-        queueFamilyCount = RENDER_DEFAULT_MAX_VALUE;
+    if (queueFamilyCount > RENDER_DEFAULT_MAX_COUNT)
+        queueFamilyCount = RENDER_DEFAULT_MAX_COUNT;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies);
 
     for (uint32_t i = 0; i < queueFamilyCount; ++i) {
@@ -1190,6 +1412,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderVulkanUtils::debug_messenger_callback(VkDeb
         .pUserData = nullptr,
     };
 }
+
 [[nodiscard]] uint32_t RenderVulkanUtils::sizeof_vk_format(VkFormat format) {
     switch (format) {
         case VK_FORMAT_R8_UNORM:
@@ -1300,4 +1523,134 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderVulkanUtils::debug_messenger_callback(VkDeb
             return ~0u;
     }
     return ~0u;
+}
+[[nodiscard]] uint32_t RenderVulkanUtils::find_memory_type(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            return i;
+    RENDER_ASSERT(false, "memory index type not found");
+}
+void RenderVulkanUtils::analyze_spirv(const uint32_t* code, uint32_t codeSize, VkShaderStageFlagBits stageFlags, RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t& variableCount)  {
+    struct basic_declaration {
+        uint32_t binding = 0u;
+        uint32_t descriptorSet = 0u;
+        uint32_t pointerTarget = 0u;
+        uint32_t size = 0u;
+        uint32_t storageClass = ~0u;
+        uint16_t opType = 0u;
+        bool isPublic = false;
+    };
+
+    std::unordered_map<uint32_t, basic_declaration> declarations;
+    uint32_t currentOffset = 5;
+
+    while (currentOffset < codeSize) {
+        const uint32_t word = code[currentOffset];
+        const uint16_t opcode = getOpcode(word);
+        const uint16_t length = getWordCount(word);
+        //std::cout << "L: " << length << "\n";
+        //std::cout << "OP: " << opcode << "\n";
+        if (length == 0 || opcode == 0)
+            break;
+
+        if (opcode == 19/*OpTypeVoid*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            (void)declarations[structId];
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 20/*OpTypeBool*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            declarations[structId].size = 16;
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 21/*OpTypeInt*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            const uint32_t size = code[currentOffset + 2]; // in bits
+            // const uint32_t signed = code[currentOffset + 3];
+            declarations[structId].size = size / 8;
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 22/*OpTypeFloat*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            const uint32_t size = code[currentOffset + 2]; // in bits
+            declarations[structId].size = size / 8;
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 23/*OpTypeVector*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            const uint32_t size = declarations.at(code[currentOffset + 2]).size * code[currentOffset + 3]; // in bytes
+            declarations[structId].size = size;
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 24/*OpTypeMatrix*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            const uint32_t size = declarations.at(code[currentOffset + 2]).size * code[currentOffset + 3]; // in bytes, must be vector
+            declarations[structId].size = size;
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 28/*OpTypeArray*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            const uint32_t size = declarations.at(code[currentOffset + 2]).size * code[currentOffset + 3]; // in bytes
+            declarations[structId].size = size;
+            declarations[structId].opType = opcode;
+
+        } else if (opcode == 30/*OpTypeStruct*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            auto& structDec = declarations[structId];// = { .binding = 0, .descriptorSet = 0, .size = 0, .isUniform = false };
+            structDec.opType = opcode;
+            for (uint32_t i = 2; i < length; ++i)
+                structDec.size += declarations.at(code[currentOffset + i]).size;
+                
+        } else if (opcode == 32/*OpTypePointer*/) {
+            const uint32_t structId = code[currentOffset + 1];
+            const uint32_t strageClass = code[currentOffset + 2];
+            const uint32_t target = code[currentOffset + 3];
+            declarations[structId].size = 8;
+            declarations[structId].opType = opcode;
+            declarations[structId].pointerTarget = target;
+
+        } else if (opcode == 59/*OpVariable*/) {
+            const uint32_t target = code[currentOffset + 1];
+            const uint32_t structId = code[currentOffset + 2];
+            const uint32_t storageClass = code[currentOffset + 3];
+            
+            declarations[structId].opType = opcode;
+            declarations[structId].pointerTarget = target;
+            declarations[structId].storageClass = storageClass;
+            if (storageClass == 2/*Uniform*/ || storageClass == 11/*Image*/ || storageClass == 12/*StorageBuffer*/) {
+                declarations[structId].isPublic = true;
+            }
+
+            if (declarations[target].pointerTarget != 0) {
+                declarations[structId].size = declarations[declarations[target].pointerTarget].size;
+            } else  {
+                declarations[structId].size = declarations[target].size;
+            }
+
+        } else if (opcode == 71/*OpDecorate*/) {
+            const uint32_t target = code[currentOffset + 1];
+            const uint32_t decoration = code[currentOffset + 2];
+            const uint32_t operand = code[currentOffset + 3];
+
+            if (decoration == 34/*DescriptorSet*/) {
+                auto& decl = declarations[target];
+                decl.descriptorSet = operand;
+            } else if (decoration == 33/*Binding*/) {
+                auto& decl = declarations[target];
+                decl.binding = operand;
+            }
+        }
+ 
+        currentOffset += length;
+    }
+
+    for (const auto& i : declarations) {
+        if (i.second.isPublic) {
+            RENDER_ASSERT(variableCount < RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT, "variableCount >= RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT");
+            publicDecls[variableCount] = RenderVulkanUtils::public_spirv_variable_declaration{.binding = i.second.binding, .descriptorSet = i.second.descriptorSet, .size = i.second.size, .type = i.second.storageClass, stageFlags};
+            ++variableCount;
+        }
+    }
 }
