@@ -121,6 +121,7 @@ namespace wirender {
                 VkBuffer buffer;
                 VkDeviceSize size;
             } buffers[RENDER_UNIFORM_BUFFER_MAX_COUNT]{};
+            void* mappedMemory = nullptr;
         };
         struct sync_object {
             VkFence fence;
@@ -256,6 +257,7 @@ namespace wirender {
 
         public:
         [[nodiscard]] RenderVulkanUtils::active_shader_state get_state() const;
+        [[nodiscard]] void* get_uniform_buffer_memory_on_binding(uint32_t);
 
         private:
         void set_members_zero();

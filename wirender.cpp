@@ -396,13 +396,17 @@ shader::~shader() {
         vkDestroyPipelineLayout(owner->logicalDevice, pipelineLayout, allocationCallbacks);
     if (renderPass != 0)
         vkDestroyRenderPass(owner->logicalDevice, renderPass, allocationCallbacks);
-    if (descriptorSetLayout)
-        vkDestroyDescriptorSetLayout(owner->logicalDevice, descriptorSetLayout, allocationCallbacks);
+    
     for (auto i : uniformBuffers.buffers)
         if (i.buffer)
             vkDestroyBuffer(owner->logicalDevice, i.buffer, allocationCallbacks);
+    if (uniformBuffers.mappedMemory)
+        vkUnmapMemory(owner->logicalDevice, uniformBuffers.memory);
     if (uniformBuffers.memory)
         vkFreeMemory(owner->logicalDevice, uniformBuffers.memory, allocationCallbacks);
+        
+    if (descriptorSetLayout)
+        vkDestroyDescriptorSetLayout(owner->logicalDevice, descriptorSetLayout, allocationCallbacks);
     if (descriptorPool)
         vkDestroyDescriptorPool(owner->logicalDevice, descriptorPool, allocationCallbacks);
     
@@ -416,41 +420,51 @@ shader::~shader() {
         .descriptorSet = descriptorSet,
     };
 }
+[[nodiscard]] void* shader::get_uniform_buffer_memory_on_binding(uint32_t binding) {
+    RENDER_ASSERT(binding < RENDER_UNIFORM_BUFFER_MAX_COUNT, "Binding has to be less than RENDER_UNIFORM_BUFFER_MAX_COUNT");
+    VkDeviceSize offset = 0;
+    for (uint32_t i = 0; i < binding; ++i) 
+        offset += uniformBuffers.buffers[i].size;
+    return (void*)((char*)uniformBuffers.mappedMemory + offset); 
+}
 void shader::set_members_zero() {
     renderPass = 0;
     pipelineLayout = 0;
     pipeline = 0;
-    descriptorSetLayout = 0;
+
     for (auto& i : uniformBuffers.buffers)
         i.buffer = 0;
+    uniformBuffers.mappedMemory = nullptr;
     uniformBuffers.memory = 0;
+
+    descriptorSetLayout = 0;
     descriptorPool = 0;
 }
 shader_builder::shader_builder(render_manager* owner_) : owner(owner_), createInfo{} {
-    RENDER_ASSERT(owner != nullptr, "owner pointer does not valid");
+    RENDER_ASSERT(owner != nullptr, "Owner pointer does not valid");
 }
 shader_builder& shader_builder::add_stage(const shader_stage& newStage) {
     //RENDER_ASSERT(newStage.code != nullptr, "code pointer is nullptr");
     //RENDER_ASSERT(newStage.codeSize > 4, "code size too small");
-    RENDER_ASSERT(createInfo.stageCount < RENDER_STAGE_MAX_COUNT, "out of createInfo.stages range");
+    RENDER_ASSERT(createInfo.stageCount < RENDER_STAGE_MAX_COUNT, "Out of createInfo.stages range");
     createInfo.stages[createInfo.stageCount] = newStage;
     ++createInfo.stageCount;
     return *this;
 }
 shader_builder& shader_builder::add_vertex_input_attribute(const VkVertexInputAttributeDescription& newAttribute) {
-    RENDER_ASSERT(createInfo.vertexInputAttributeCount < RENDER_INPUT_ATTRIBUTE_MAX_COUNT, "out of createInfo.vertexInputAtributes range");
+    RENDER_ASSERT(createInfo.vertexInputAttributeCount < RENDER_INPUT_ATTRIBUTE_MAX_COUNT, "Out of createInfo.vertexInputAtributes range");
     createInfo.vertexInputAtributes[createInfo.vertexInputAttributeCount] = newAttribute;
     ++createInfo.vertexInputAttributeCount;
     return *this;
 }
 shader_builder& shader_builder::add_dynamic_state(VkDynamicState newState) {
-    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DYNAMIC_STATE_MAX_COUNT, "out of createInfo.dynamicStateCount range");
+    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DYNAMIC_STATE_MAX_COUNT, "Out of createInfo.dynamicStateCount range");
     createInfo.dynamicStates[createInfo.dynamicStateCount] = newState;
     ++createInfo.dynamicStateCount;
     return *this;
 }
 shader_builder& shader_builder::pop_dynamic_state() {
-    RENDER_ASSERT(createInfo.dynamicStateCount > 0, "out of createInfo.dynamicStateCount range");
+    RENDER_ASSERT(createInfo.dynamicStateCount > 0, "Out of createInfo.dynamicStateCount range");
     --createInfo.dynamicStateCount;
     return *this;
 }
@@ -478,7 +492,7 @@ shader_builder& shader_builder::set_cull_mode(VkCullModeFlagBits newCullMode) {
     return shader(owner, createInfo);
 }
 buffer_host_mapped_memory::buffer_host_mapped_memory(render_manager* owner_, const buffer_create_info& createInfo) : owner(owner_), size(createInfo.size), buffer{}, usage(createInfo.usage) {
-    RENDER_ASSERT(owner != nullptr, "owner pointer does not valid");
+    RENDER_ASSERT(owner != nullptr, "Owner pointer does not valid");
 
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
@@ -585,7 +599,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     VkPhysicalDevice devices[RENDER_DEFAULT_MAX_COUNT] = {};
     uint32_t deviceCount = 0;
     RENDER_VK_CHECK(vkEnumeratePhysicalDevices(vulkanInstance, &deviceCount, 0));
-    RENDER_ASSERT(deviceCount > 0, "passed zero devices");
+    RENDER_ASSERT(deviceCount > 0, "Passed zero devices");
     if (deviceCount > RENDER_DEFAULT_MAX_COUNT)
         deviceCount = RENDER_DEFAULT_MAX_COUNT;
     RENDER_VK_CHECK(vkEnumeratePhysicalDevices(vulkanInstance, &deviceCount, devices));
@@ -596,8 +610,8 @@ void buffer_host_mapped_memory::set_members_zero() {
 [[nodiscard]] VkSurfaceKHR render_manager::create_surface() const {
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
-    RENDER_ASSERT(windowInfo.hwnd != 0, "invalid hwnd");
-    RENDER_ASSERT(windowInfo.hInstance != 0, "invalid hwnd");
+    RENDER_ASSERT(windowInfo.hwnd != 0, "Invalid hwnd");
+    RENDER_ASSERT(windowInfo.hInstance != 0, "Invalid hInstance");
 
     const VkWin32SurfaceCreateInfoKHR surfaceInfo {
         .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
@@ -615,8 +629,8 @@ void buffer_host_mapped_memory::set_members_zero() {
 [[nodiscard]] VkSurfaceKHR render_manager::create_surface() const {
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
-    RENDER_ASSERT(windowInfo.dpy != 0, "invalid display");
-    RENDER_ASSERT(windowInfo.window != 0, "invalid window");
+    RENDER_ASSERT(windowInfo.dpy != 0, "Invalid display");
+    RENDER_ASSERT(windowInfo.window != 0, "Invalid window");
 
     const VkXlibSurfaceCreateInfoKHR surfaceInfo {
         .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
@@ -633,7 +647,7 @@ void buffer_host_mapped_memory::set_members_zero() {
 #endif // defined __WIN32
 [[nodiscard]] RenderVulkanUtils::queue_family_indices render_manager::create_falimy_indices() const {
     RenderVulkanUtils::queue_family_indices queueIndeces = RenderVulkanUtils::find_queue_families(physicalDevice, surface);
-    RENDER_ASSERT(queueIndeces.is_complete(), "physical device families indeces isn`t complite");
+    RENDER_ASSERT(queueIndeces.is_complete(), "Physical device families indices aren't complete");
     return queueIndeces;
 }
 [[nodiscard]] RenderVulkanUtils::logical_device_info render_manager::create_logical_device() const {
@@ -676,7 +690,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     uint32_t formatCount = 0;
     VkSurfaceFormatKHR formats[RENDER_DEFAULT_MAX_COUNT] = {};
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr));
-    RENDER_ASSERT(formatCount > 0, "no supported formats found");
+    RENDER_ASSERT(formatCount > 0, "No supported formats found");
     if (formatCount > RENDER_DEFAULT_MAX_COUNT)
         formatCount = RENDER_DEFAULT_MAX_COUNT;
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats));
@@ -684,7 +698,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     uint32_t presentModeCount = 0;
     VkPresentModeKHR presentModes[RENDER_DEFAULT_MAX_COUNT] = {};
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
-    RENDER_ASSERT(presentModeCount > 0, "no supported present modes");
+    RENDER_ASSERT(presentModeCount > 0, "No supported present modes");
     if (presentModeCount > RENDER_DEFAULT_MAX_COUNT)
         presentModeCount = RENDER_DEFAULT_MAX_COUNT;
     RENDER_VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes));
@@ -746,7 +760,7 @@ void render_manager::initialize_swapchain_images(RenderVulkanUtils::swapchain_im
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     RENDER_VK_CHECK(vkGetSwapchainImagesKHR(logicalDevice, swapchain, &swapchainImagesToInitialize.imageCount, nullptr));
-    RENDER_ASSERT(swapchainImagesToInitialize.imageCount > 0, "no images from swapchain");
+    RENDER_ASSERT(swapchainImagesToInitialize.imageCount > 0, "No images from swapchain");
     if (swapchainImagesToInitialize.imageCount > RENDER_SWAPCHAIN_IMAGE_MAX_COUNT)
         swapchainImagesToInitialize.imageCount = RENDER_SWAPCHAIN_IMAGE_MAX_COUNT;
     RENDER_VK_CHECK(vkGetSwapchainImagesKHR(logicalDevice, swapchain, &swapchainImagesToInitialize.imageCount, swapchainImagesToInitialize.images));
@@ -867,7 +881,7 @@ uint16_t getWordCount(uint32_t word) {
             poolSizes[poolSizeCount].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             ++poolSizeCount;
         }
-        RENDER_ASSERT(poolSizeCount < RENDER_DESCRIPTOR_MAX_COUNT, "poolSizeCount >= RENDER_DESCRIPTOR_MAX_COUNT");
+        RENDER_ASSERT(poolSizeCount < RENDER_DESCRIPTOR_MAX_COUNT, "poolSizeCount has to be less than RENDER_DESCRIPTOR_MAX_COUNT");
     }
     const VkDescriptorPoolCreateInfo descriptorPoolCreateInfo {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -889,8 +903,8 @@ uint16_t getWordCount(uint32_t word) {
         const auto& pubDecl = publicDecls[i];
         if (pubDecl.type != 2/*Uniform*/)
             continue;
-        RENDER_ASSERT(pubDecl.binding < RENDER_UNIFORM_BUFFER_MAX_COUNT, "uniform buffer binding >= RENDER_UNIFORM_BUFFER_MAX_COUNT");
-        RENDER_ASSERT(result.buffers[pubDecl.binding].size == 0, "this binding defined twice or more times");
+        RENDER_ASSERT(pubDecl.binding < RENDER_UNIFORM_BUFFER_MAX_COUNT, "Uniform buffer binding has to be less than RENDER_UNIFORM_BUFFER_MAX_COUNT");
+        RENDER_ASSERT(result.buffers[pubDecl.binding].size == 0, "This binding is defined twice or more times");
         result.buffers[pubDecl.binding].size = pubDecl.size;  
     }
     
@@ -925,9 +939,9 @@ uint16_t getWordCount(uint32_t word) {
 
         RENDER_VK_CHECK(vkCreateBuffer(owner->logicalDevice, &bufferCreateInfo, allocationCallbacks, &result.buffers[i].buffer));
         RENDER_VK_CHECK(vkBindBufferMemory(owner->logicalDevice, result.buffers[i].buffer, result.memory, offset));
-        
         offset += result.buffers[i].size;
     }
+    RENDER_VK_CHECK(vkMapMemory(owner->logicalDevice, result.memory, 0, totalBufferSize, (VkFlags)0, &result.mappedMemory));
     return result;
 }
 [[nodiscard]] VkDescriptorSetLayout shader::create_descriptor_set_layout(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t publicDeclCount) {
@@ -1080,12 +1094,12 @@ uint16_t getWordCount(uint32_t word) {
 }
 [[nodiscard]] VkPipeline shader::create_pipeline(const shader_create_info& createInfo) const {
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
-    RENDER_ASSERT(createInfo.stageCount < RENDER_STAGE_MAX_COUNT, "too many stages");
-    RENDER_ASSERT(createInfo.stageCount > 0, "no shader stages for shader programm");
+    RENDER_ASSERT(createInfo.stageCount < RENDER_STAGE_MAX_COUNT, "Too many stages");
+    RENDER_ASSERT(createInfo.stageCount > 0, "No shader stages for shader program");
 
-    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DYNAMIC_STATE_MAX_COUNT, "too many dynamic states");
+    RENDER_ASSERT(createInfo.dynamicStateCount < RENDER_DYNAMIC_STATE_MAX_COUNT, "Too many dynamic states");
 
-    RENDER_ASSERT(createInfo.vertexInputAttributeCount < RENDER_INPUT_ATTRIBUTE_MAX_COUNT, "too many vertex input attributes");
+    RENDER_ASSERT(createInfo.vertexInputAttributeCount < RENDER_INPUT_ATTRIBUTE_MAX_COUNT, "Too many vertex input attributes");
 
     VkPipelineShaderStageCreateInfo shaderStages[RENDER_DEFAULT_MAX_COUNT];
 
@@ -1301,7 +1315,7 @@ uint16_t getWordCount(uint32_t word) {
             bestDevice = {device, features2, properties2, {}};
         }
     }
-    RENDER_ASSERT(bestDeviceScore > 0, "physical device not found");
+    RENDER_ASSERT(bestDeviceScore > 0, "Physical device not found");
     return bestDevice;
 }
 [[nodiscard]] RenderVulkanUtils::queue_family_indices RenderVulkanUtils::find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
@@ -1530,7 +1544,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL RenderVulkanUtils::debug_messenger_callback(VkDeb
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
         if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
             return i;
-    RENDER_ASSERT(false, "memory index type not found");
+    RENDER_ASSERT(false, "Memory index type not found");
 }
 void RenderVulkanUtils::analyze_spirv(const uint32_t* code, uint32_t codeSize, VkShaderStageFlagBits stageFlags, RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t& variableCount)  {
     struct basic_declaration {
@@ -1648,7 +1662,7 @@ void RenderVulkanUtils::analyze_spirv(const uint32_t* code, uint32_t codeSize, V
 
     for (const auto& i : declarations) {
         if (i.second.isPublic) {
-            RENDER_ASSERT(variableCount < RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT, "variableCount >= RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT");
+            RENDER_ASSERT(variableCount < RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT, "variableCount has to be less than RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT");
             publicDecls[variableCount] = RenderVulkanUtils::public_spirv_variable_declaration{.binding = i.second.binding, .descriptorSet = i.second.descriptorSet, .size = i.second.size, .type = i.second.storageClass, stageFlags};
             ++variableCount;
         }
