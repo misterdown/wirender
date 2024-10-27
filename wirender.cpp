@@ -66,7 +66,7 @@ namespace wirender {
         #endif // defined __WIN32
     };
 };
-render_manager::render_manager(const window_info& windowInfo) : 
+render_manager::render_manager(const window_info& windowInfo, bool enableValidation) : 
         windowInfo(windowInfo),
         vulkanInstance(0),
         debugMessenger(0),
@@ -82,7 +82,7 @@ render_manager::render_manager(const window_info& windowInfo) :
         currentShader{},
         bindedBuffer{},
         imageIndex(0),
-        validationEnable(true) {
+        validationEnable(enableValidation) {
 
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
@@ -536,8 +536,10 @@ buffer_host_mapped_memory::~buffer_host_mapped_memory() {
 
     set_members_zero();
 }
-void buffer_host_mapped_memory::map_memory(void** datap) {
-    vkMapMemory(owner->logicalDevice, buffer.memory, 0, size, 0, datap);
+void* buffer_host_mapped_memory::map_memory() {
+    void* result = nullptr;
+    vkMapMemory(owner->logicalDevice, buffer.memory, 0, size, 0, &result);
+    return result;
 }
 void buffer_host_mapped_memory::unmap_memory() {
     vkUnmapMemory(owner->logicalDevice, buffer.memory);

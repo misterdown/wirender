@@ -180,7 +180,7 @@ namespace wirender {
 
         public:
         render_manager() = delete;
-        render_manager(const window_info&);
+        render_manager(const window_info&, bool enableValidation = false);
         render_manager(const render_manager&) = delete;
         render_manager(render_manager&&);
 
@@ -312,7 +312,7 @@ namespace wirender {
         ~buffer_host_mapped_memory();
 
         public:
-        void map_memory(void**);
+        void* map_memory();
         void unmap_memory();
         [[nodiscard]] RenderVulkanUtils::binded_buffer_state get_state() const;
 
