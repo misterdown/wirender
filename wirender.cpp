@@ -22,28 +22,21 @@
     SOFTWARE.
 */
 #include "wirender.hpp"
-#include <cassert>
 #include <iostream>
 #include <unordered_map>
-//#include <vk_enum_string_helper.h>
-#if (defined __WIN32)
+#include <vulkan/vk_enum_string_helper.h>
+#if ((defined __WIN32) || (defined _WIN32) || (defined _WIN32_) || (defined __WIN32__))
 #   include <vulkan/vulkan_win32.h>
-#else
-#   include <vulkan/vulkan_xlib.h>
 #endif
 using namespace wirender;
 
-#define RENDER_ASSERT(expr__, msg) do { if ((expr__) == 0) { _assert(msg, __FILE__, __LINE__); } } while(0)
+#define RENDER_ASSERT(expr__, msg) do { if ((expr__) == false) { std::cerr << "render assertion fault: " << __FILE__ << ":" << __LINE__ << ": " << msg; exit(1); } } while(0)
 #define RENDER_ARRAY_SIZE(arr__) (sizeof(arr__) / sizeof(arr__[0])) 
 
 /// watch: https://registry.khronos.org/vulkan/specs/1.3-instanceExtensions/man/html/VkResult.html
 #define RENDER_VK_CHECK(vkrexpr___) do { const VkResult vkr__ = vkrexpr___; RENDER_ASSERT(\
-        (vkr__ == VK_SUCCESS) || (vkr__ == VK_NOT_READY) || (vkr__ == VK_TIMEOUT) ||\
-        (vkr__ == VK_EVENT_SET) || (vkr__ == VK_EVENT_RESET) || (vkr__ == VK_INCOMPLETE ) ||\
-        (vkr__ == VK_SUBOPTIMAL_KHR ) || (vkr__ == VK_THREAD_IDLE_KHR ) || (vkr__ == VK_THREAD_DONE_KHR) ||\
-        (vkr__ == VK_OPERATION_DEFERRED_KHR) || (vkr__ == VK_OPERATION_NOT_DEFERRED_KHR) || (vkr__ == VK_THREAD_DONE_KHR), /*string_VkResult(vkr__)*/ "demn");}\
+        (vkr__ == VK_SUCCESS), string_VkResult(vkr__));}\
     while(0);
-//(vkr__ == VK_PIPELINE_COMPILE_REQUIRED) || (vkr__ == VK_PIPELINE_BINARY_MISSING_KHR) || (vkr__ == VK_INCOMPATIBLE_SHADER_BINARY_EXT ) ||
 
 namespace wirender {
     namespace RenderVulkanUtils {
@@ -59,7 +52,7 @@ namespace wirender {
 
         static const char* deviceExtensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
         static const char* validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
-        #if (defined __WIN32)
+        #if ((defined __WIN32) || (defined _WIN32) || (defined _WIN32_) || (defined __WIN32__))
             static const char* instanceExtensions[] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME, "VK_EXT_debug_utils" };
         #else
         #   error "NOT SUPPORTED"
@@ -164,7 +157,7 @@ render_manager::~render_manager() {
 }
 render_manager& render_manager::clear_command_list() {
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i)
-        vkResetCommandBuffer(commandBuffers[i], (VkFlags)0);
+        vkResetCommandBuffer(commandBuffers[i], static_cast<VkFlags>(0));
     return *this;
 }
 render_manager& render_manager::start_record() {
@@ -184,7 +177,7 @@ render_manager& render_manager::start_record() {
         const VkCommandBufferBeginInfo beginInfo {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .pNext = nullptr,
-            .flags = (VkFlags)0,
+            .flags = static_cast<VkFlags>(0),
             .pInheritanceInfo = &inheritanceInfo,
         };
 
@@ -378,7 +371,7 @@ shader::shader(render_manager* owner_, const shader_create_info& createInfo) : o
     uniformBuffers = create_uniform_buffers(createInfo, publicDecls, publicDeclCount);
     descriptorSetLayout = create_descriptor_set_layout(createInfo, publicDecls, publicDeclCount);
     descriptorSet = create_descriptor_set(createInfo, publicDecls, publicDeclCount);
-    renderPass = create_render_pass();
+    renderPass = create_render_pass(createInfo);
     pipelineLayout = create_pipeline_layout();
     pipeline = create_pipeline(createInfo);
 }
@@ -425,7 +418,7 @@ shader::~shader() {
     VkDeviceSize offset = 0;
     for (uint32_t i = 0; i < binding; ++i) 
         offset += uniformBuffers.buffers[i].size;
-    return (void*)((char*)uniformBuffers.mappedMemory + offset); 
+    return reinterpret_cast<void*>((char*)uniformBuffers.mappedMemory + offset); 
 }
 void shader::set_members_zero() {
     renderPass = 0;
@@ -488,6 +481,10 @@ shader_builder& shader_builder::set_cull_mode(VkCullModeFlagBits newCullMode) {
     createInfo.cullMode = newCullMode;
     return *this;
 }
+shader_builder& shader_builder::set_clear_screen(bool clear) {
+    createInfo.clearScreen = clear;
+    return *this;
+}
 [[nodiscard]] shader shader_builder::build() const {
     return shader(owner, createInfo);
 }
@@ -499,7 +496,7 @@ buffer_host_mapped_memory::buffer_host_mapped_memory(render_manager* owner_, con
     const VkBufferCreateInfo bufferCreateInfo {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .size = size,
         .usage = usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -573,11 +570,11 @@ void buffer_host_mapped_memory::set_members_zero() {
     const VkInstanceCreateInfo instanceInfo{
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pNext = validationEnable ? &dbgMessengerCreateInfo : 0,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .pApplicationInfo = &appInfo,
-        .enabledLayerCount = (uint32_t)RENDER_ARRAY_SIZE(RenderVulkanUtils::validationLayers) - (validationEnable ? 0u : 1u),
+        .enabledLayerCount = static_cast<uint32_t>(RENDER_ARRAY_SIZE(RenderVulkanUtils::validationLayers) - (validationEnable ? 0u : 1u)),
         .ppEnabledLayerNames = RenderVulkanUtils::validationLayers,
-        .enabledExtensionCount = (uint32_t)RENDER_ARRAY_SIZE(RenderVulkanUtils::instanceExtensions) - (validationEnable ? 0u : 1u),
+        .enabledExtensionCount = static_cast<uint32_t>(RENDER_ARRAY_SIZE(RenderVulkanUtils::instanceExtensions) - (validationEnable ? 0u : 1u)),
         .ppEnabledExtensionNames = RenderVulkanUtils::instanceExtensions,
     };
 
@@ -608,7 +605,7 @@ void buffer_host_mapped_memory::set_members_zero() {
 
     return RenderVulkanUtils::choose_best_physical_device(devices, deviceCount);
 }
-#if (defined __WIN32)
+#if ((defined __WIN32) || (defined _WIN32) || (defined _WIN32_) || (defined __WIN32__))
 [[nodiscard]] VkSurfaceKHR render_manager::create_surface() const {
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
@@ -618,31 +615,12 @@ void buffer_host_mapped_memory::set_members_zero() {
     const VkWin32SurfaceCreateInfoKHR surfaceInfo {
         .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .hinstance = windowInfo.hInstance,
         .hwnd = windowInfo.hwnd,
     };
     VkSurfaceKHR newSurface;
     RENDER_VK_CHECK(vkCreateWin32SurfaceKHR(vulkanInstance, &surfaceInfo, allocationCallbacks, &newSurface));
-
-    return newSurface;
-}
-#else
-[[nodiscard]] VkSurfaceKHR render_manager::create_surface() const {
-    const VkAllocationCallbacks* allocationCallbacks = nullptr;
-
-    RENDER_ASSERT(windowInfo.dpy != 0, "Invalid display");
-    RENDER_ASSERT(windowInfo.window != 0, "Invalid window");
-
-    const VkXlibSurfaceCreateInfoKHR surfaceInfo {
-        .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
-        .pNext = nullptr,
-        .flags = (VkFlags)0,
-        .dpy = windowInfo.dpy,
-        .window = windowInfo.window,
-    };
-    VkSurfaceKHR newSurface;
-    RENDER_VK_CHECK(vkCreateXlibSurfaceKHR(vulkanInstance, &surfaceInfo, allocationCallbacks, &newSurface));
 
     return newSurface;
 }
@@ -657,18 +635,20 @@ void buffer_host_mapped_memory::set_members_zero() {
 
     VkDeviceQueueCreateInfo queueCreateInfos[2];
 
-    float queuePriority = 1.0f;
+    const float queuePriorities[] =  { 1.0f };
     for (uint32_t i = 0; i < physicalDevice.queueIndeces.falimiesCount; ++i) {
         VkDeviceQueueCreateInfo& queueCreateInfo = queueCreateInfos[i];
         queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.pNext = nullptr;
+        queueCreateInfo.flags = static_cast<VkFlags>(0);
         queueCreateInfo.queueFamilyIndex = physicalDevice.queueIndeces.indeces[i];
         queueCreateInfo.queueCount = 1;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfo.pQueuePriorities = queuePriorities;
     }
     const VkDeviceCreateInfo deviceInfo{
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = &physicalDevice.features,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .queueCreateInfoCount = physicalDevice.queueIndeces.falimiesCount,
         .pQueueCreateInfos = queueCreateInfos,
         .enabledLayerCount = 0,
@@ -677,7 +657,6 @@ void buffer_host_mapped_memory::set_members_zero() {
         .ppEnabledExtensionNames =  RenderVulkanUtils::deviceExtensions,
         .pEnabledFeatures = nullptr,
     };
-
     RenderVulkanUtils::logical_device_info result{};
     RENDER_VK_CHECK(vkCreateDevice(physicalDevice, &deviceInfo, allocationCallbacks, &result.device));
     vkGetDeviceQueue(result.device, physicalDevice.queueIndeces.graphicsFamily, 0, &result.graphicsQueue);
@@ -736,7 +715,7 @@ void buffer_host_mapped_memory::set_members_zero() {
     const VkSwapchainCreateInfoKHR swapchainCreateInfo {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .surface = surface,
         .minImageCount = swapchainSupportInfo.imageCount,
         .imageFormat = swapchainSupportInfo.imageFormat.format,
@@ -771,7 +750,7 @@ void render_manager::initialize_swapchain_images(RenderVulkanUtils::swapchain_im
         const VkImageViewCreateInfo imageViewCreateInfo {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .pNext = nullptr,
-            .flags = (VkFlags)0,
+            .flags = static_cast<VkFlags>(0),
             .image = swapchainImagesToInitialize.images[i],
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = swapchainSupportInfo.imageFormat.format,
@@ -794,7 +773,7 @@ void render_manager::initialize_swapchain_images(RenderVulkanUtils::swapchain_im
         const VkFramebufferCreateInfo framebufferCreateInfo {
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .pNext = nullptr,
-            .flags = (VkFlags)0,
+            .flags = static_cast<VkFlags>(0),
             .renderPass = defaultRenderPass,
             .attachmentCount = 1,
             .pAttachments = &swapchainImagesToInitialize.views[i],
@@ -853,7 +832,7 @@ void render_manager::intitialize_sync_object(RenderVulkanUtils::sync_object& syn
     const VkSemaphoreCreateInfo semapforeInfo {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
     };
     RENDER_VK_CHECK(vkCreateSemaphore(logicalDevice, &semapforeInfo, allocationCallbacks, &syncObjectsToInitialize.semaphore));
 }
@@ -888,7 +867,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkDescriptorPoolCreateInfo descriptorPoolCreateInfo {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .maxSets = 1,
         .poolSizeCount = poolSizeCount,
         .pPoolSizes = poolSizes,
@@ -907,14 +886,13 @@ uint16_t getWordCount(uint32_t word) {
             continue;
         RENDER_ASSERT(pubDecl.binding < RENDER_UNIFORM_BUFFER_MAX_COUNT, "Uniform buffer binding has to be less than RENDER_UNIFORM_BUFFER_MAX_COUNT");
         RENDER_ASSERT(result.buffers[pubDecl.binding].size == 0, "This binding is defined twice or more times");
-        result.buffers[pubDecl.binding].size = pubDecl.size;  
+        result.buffers[pubDecl.binding].size = pubDecl.size >= 128 ? pubDecl.size : 128; // 128 - maximum align
     }
     
     VkDeviceSize totalBufferSize = 0;
     for (uint32_t i = 0; i < RENDER_UNIFORM_BUFFER_MAX_COUNT; ++i)
         totalBufferSize += result.buffers[i].size;
-    totalBufferSize = totalBufferSize < 128 ? 128 : totalBufferSize; // 128 - common minimal allocated memory size
-
+    totalBufferSize = totalBufferSize;
     const VkMemoryAllocateInfo allocationInfo {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .pNext = nullptr,
@@ -931,7 +909,7 @@ uint16_t getWordCount(uint32_t word) {
         const VkBufferCreateInfo bufferCreateInfo {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .pNext = nullptr,
-            .flags = (VkFlags)0, //VK_BUFFER_CREATE_SPARSE_ALIASED_BIT | VK_BUFFER_CREATE_SPARSE_BINDING_BIT,
+            .flags = static_cast<VkFlags>(0), //VK_BUFFER_CREATE_SPARSE_ALIASED_BIT | VK_BUFFER_CREATE_SPARSE_BINDING_BIT,
             .size = result.buffers[i].size,
             .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -943,7 +921,7 @@ uint16_t getWordCount(uint32_t word) {
         RENDER_VK_CHECK(vkBindBufferMemory(owner->logicalDevice, result.buffers[i].buffer, result.memory, offset));
         offset += result.buffers[i].size;
     }
-    RENDER_VK_CHECK(vkMapMemory(owner->logicalDevice, result.memory, 0, totalBufferSize, (VkFlags)0, &result.mappedMemory));
+    RENDER_VK_CHECK(vkMapMemory(owner->logicalDevice, result.memory, 0, totalBufferSize, static_cast<VkFlags>(0), &result.mappedMemory));
     return result;
 }
 [[nodiscard]] VkDescriptorSetLayout shader::create_descriptor_set_layout(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration publicDecls[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t publicDeclCount) {
@@ -973,7 +951,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .bindingCount = bindingCount,
         .pBindings = bindings,
     };
@@ -1018,14 +996,14 @@ uint16_t getWordCount(uint32_t word) {
     }
     return result;
 }
-[[nodiscard]] VkRenderPass shader::create_render_pass() const {
+[[nodiscard]] VkRenderPass shader::create_render_pass(const shader_create_info& createInfo) const {
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
 
     const VkAttachmentDescription colorAttachment {
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .format = owner->swapchainSupportInfo.imageFormat.format,
         .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .loadOp = createInfo.clearScreen ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
@@ -1039,7 +1017,7 @@ uint16_t getWordCount(uint32_t word) {
     };
 
     const VkSubpassDescription subpass {
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .inputAttachmentCount = 0,
         .pInputAttachments = 0,
@@ -1056,15 +1034,15 @@ uint16_t getWordCount(uint32_t word) {
         .dstSubpass = 0,
         .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = (VkFlags)0,
+        .srcAccessMask = static_cast<VkFlags>(0),
         .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dependencyFlags = (VkFlags)0,
+        .dependencyFlags = static_cast<VkFlags>(0),
     };
     const VkAttachmentDescription attachments[] = { colorAttachment };
     const VkRenderPassCreateInfo renderPassCreateInfo {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .attachmentCount = static_cast<uint32_t>(RENDER_ARRAY_SIZE(attachments)),
         .pAttachments = attachments,
         .subpassCount = 1,
@@ -1083,7 +1061,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .setLayoutCount = descriptorSetLayout ? 1u : 0u,
         .pSetLayouts = descriptorSetLayout ? &descriptorSetLayout : nullptr,
         .pushConstantRangeCount = 0,
@@ -1109,7 +1087,7 @@ uint16_t getWordCount(uint32_t word) {
         const VkShaderModuleCreateInfo shaderModuleCreateInfo {
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .pNext = nullptr,
-            .flags = (VkFlags)0,
+            .flags = static_cast<VkFlags>(0),
             .codeSize = createInfo.stages[i].codeSize,
             .pCode = createInfo.stages[i].code,
         };
@@ -1117,7 +1095,7 @@ uint16_t getWordCount(uint32_t word) {
         RENDER_VK_CHECK(vkCreateShaderModule(owner->logicalDevice, &shaderModuleCreateInfo, allocationCallbacks, &shaderStages[i].module));
         shaderStages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         shaderStages[i].pNext = nullptr;
-        shaderStages[i].flags = (VkFlags)0;
+        shaderStages[i].flags = static_cast<VkFlags>(0);
         shaderStages[i].stage = createInfo.stages[i].stage;
         shaderStages[i].pName = "main";
         shaderStages[i].pSpecializationInfo = {};
@@ -1135,7 +1113,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineVertexInputStateCreateInfo vertexInputInfo {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &inputBinding,
         .vertexAttributeDescriptionCount = createInfo.vertexInputAttributeCount,
@@ -1145,7 +1123,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .topology = createInfo.primitiveTopology,
         .primitiveRestartEnable = VK_FALSE,
     };
@@ -1161,7 +1139,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineViewportStateCreateInfo viewportState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .viewportCount = 1,
         .pViewports = &view,
         .scissorCount = 1,
@@ -1171,11 +1149,11 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineRasterizationStateCreateInfo rasterizer{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .depthClampEnable = VK_FALSE,
         .rasterizerDiscardEnable = VK_FALSE,
         .polygonMode = createInfo.polygonMode,
-        .cullMode = createInfo.cullMode,//VK_CULL_MODE_BACK_BIT,
+        .cullMode = (VkCullModeFlags)createInfo.cullMode,//VK_CULL_MODE_BACK_BIT,
         .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = VK_FALSE,
         .depthBiasConstantFactor = 0,
@@ -1187,7 +1165,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineMultisampleStateCreateInfo multisampling{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .rasterizationSamples = createInfo.rasterizationSampleCount,
         .sampleShadingEnable = createInfo.rasterizationSampleCount != VK_SAMPLE_COUNT_1_BIT,
         .minSampleShading = 0,
@@ -1199,7 +1177,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineDepthStencilStateCreateInfo depthStencil {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .depthTestEnable = VK_TRUE,
         .depthWriteEnable = VK_TRUE,
         .depthCompareOp = VK_COMPARE_OP_LESS,
@@ -1225,7 +1203,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineColorBlendStateCreateInfo colorBlending{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .logicOpEnable = VK_FALSE,
         .logicOp = VK_LOGIC_OP_COPY,
         .attachmentCount = 1,
@@ -1236,7 +1214,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkPipelineDynamicStateCreateInfo dynamicState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .dynamicStateCount = createInfo.dynamicStateCount,
         .pDynamicStates = createInfo.dynamicStates,
     };
@@ -1244,7 +1222,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkGraphicsPipelineCreateInfo pipelineInfo {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .stageCount = createInfo.stageCount,
         .pStages = shaderStages,
         .pVertexInputState = &vertexInputInfo,
@@ -1349,10 +1327,10 @@ uint16_t getWordCount(uint32_t word) {
 }
 [[nodiscard]] VkRenderPass RenderVulkanUtils::create_default_render_pass(VkDevice device, VkFormat imageFormat, const VkAllocationCallbacks* allocationCallbacks) {
     const VkAttachmentDescription colorAttachment {
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .format = imageFormat,
         .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
@@ -1366,7 +1344,7 @@ uint16_t getWordCount(uint32_t word) {
     };
 
     const VkSubpassDescription subpass {
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .inputAttachmentCount = 0,
         .pInputAttachments = 0,
@@ -1391,7 +1369,7 @@ uint16_t getWordCount(uint32_t word) {
     const VkRenderPassCreateInfo renderPassCreateInfo {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .pNext = nullptr,
-        .flags = (VkFlags)0,
+        .flags = static_cast<VkFlags>(0),
         .attachmentCount = static_cast<uint32_t>(RENDER_ARRAY_SIZE(attachments)),
         .pAttachments = attachments,
         .subpassCount = 1,
@@ -1665,7 +1643,7 @@ void RenderVulkanUtils::analyze_spirv(const uint32_t* code, uint32_t codeSize, V
     for (const auto& i : declarations) {
         if (i.second.isPublic) {
             RENDER_ASSERT(variableCount < RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT, "variableCount has to be less than RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT");
-            publicDecls[variableCount] = RenderVulkanUtils::public_spirv_variable_declaration{.binding = i.second.binding, .descriptorSet = i.second.descriptorSet, .size = i.second.size, .type = i.second.storageClass, stageFlags};
+            publicDecls[variableCount] = RenderVulkanUtils::public_spirv_variable_declaration{.binding = i.second.binding, .descriptorSet = i.second.descriptorSet, .size = i.second.size, .type = i.second.storageClass, .stageFlags = stageFlags};
             ++variableCount;
         }
     }
