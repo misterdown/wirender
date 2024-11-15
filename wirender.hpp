@@ -22,11 +22,8 @@
     SOFTWARE.
 */
 #include <vulkan/vulkan.h>
-#if (defined __WIN32)
+#if ((defined __WIN32) || (defined _WIN32) || (defined _WIN32_) || (defined __WIN32__))
 #   include <windows.h>
-#else
-#   include <X11/Xlib.h>
-//  use XLib for creating surface
 #endif
 
 #define RENDER_VK_INVALID_FAMILY_INDEX ~0u
@@ -35,6 +32,7 @@
 #define RENDER_SAMPLED_IMAGE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
 #define RENDER_DYNAMIC_STATE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
 #define RENDER_INPUT_ATTRIBUTE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
+#define RENDER_COMMAND_MAX_COUNT 256
 #define RENDER_STAGE_MAX_COUNT RENDER_DEFAULT_MAX_COUNT
 #define RENDER_SWAPCHAIN_IMAGE_MAX_COUNT 8
 #define RENDER_DESCRIPTOR_MAX_COUNT (RENDER_UNIFORM_BUFFER_MAX_COUNT + RENDER_SAMPLED_IMAGE_MAX_COUNT)
@@ -141,17 +139,40 @@ namespace wirender {
         VkShaderStageFlagBits stage;
     };
 
-    #if (defined __WIN32)
+    #if ((defined __WIN32) || (defined _WIN32) || (defined _WIN32_) || (defined __WIN32__))
     struct window_info final {
         HWND hwnd;
         HINSTANCE hInstance;
     };
-    #else
-    struct window_info final {
-        Display* dpy;
-        Window window;
-    };
     #endif // defined __WIN32
+    // | null | - nothing.
+    // | [word1, word2] | - member name in render_command::data
+
+    enum render_command_type {
+        RENDER_COMMAND_TYPE_CLEAR_COMMAND_BUFFERS, // data: null 
+        RENDER_COMMAND_TYPE_SET_SHADER,            // data: [ activeShaderState ]
+        RENDER_COMMAND_TYPE_BIND_BUFFER,           // data: [ bindedBufferState ]
+        RENDER_COMMAND_TYPE_START_RECORD,          // data: null
+        RENDER_COMMAND_TYPE_RECORD_UPDATE_SCISSOR, // data: null
+        RENDER_COMMAND_TYPE_RECORD_UPDATE_VIEWPORT,// data: null
+        RENDER_COMMAND_TYPE_RECORD_START_RENDER,   // data: null
+        RENDER_COMMAND_TYPE_RECORD_DRAW_VERTECES,  // data: [ drawData[0..2] ]
+        RENDER_COMMAND_TYPE_RECORD_DRAW_INDEXED,   // data: [ drawData[0..2] ]
+        RENDER_COMMAND_TYPE_RECORD_END_RENDER,     // data: null
+        RENDER_COMMAND_TYPE_END_RECORD,            // data: null
+    };
+    struct render_command {
+        render_command_type commandType;
+        union {
+            RenderVulkanUtils::active_shader_state activeShaderState;
+            RenderVulkanUtils::binded_buffer_state bindedBufferState;
+            uint32_t drawData[3];
+        } data;
+    };
+    struct render_commands {
+        render_command commands[RENDER_COMMAND_MAX_COUNT];
+        uint32_t count;
+    };
 
     struct render_manager final {
         public:
@@ -176,6 +197,7 @@ namespace wirender {
         RenderVulkanUtils::active_shader_state currentShader;
         RenderVulkanUtils::binded_buffer_state bindedBuffer;
         uint32_t imageIndex;
+        render_commands appliedCommands;
         bool validationEnable;
 
         public:
@@ -188,14 +210,12 @@ namespace wirender {
         ~render_manager();
 
         public:
-        render_manager& clear_command_list();
+        render_manager& set_commands(const render_commands& commands);
+        render_manager& clear_command_buffers();
         render_manager& set_shader(const RenderVulkanUtils::active_shader_state& shaderState);
         render_manager& bind_buffer(const RenderVulkanUtils::binded_buffer_state& bufferState);
         render_manager& wait_executing();
         render_manager& start_record();
-        //render_manager& record_set_topology(VkPrimitiveTopology); not supported yet
-        //render_manager& record_set_polygon_move(VkPolygonMode);
-        //render_manager& record_set_cull_mode(VkCullModeFlagBits);
         render_manager& record_update_viewport();
         render_manager& record_update_scissor();
         render_manager& record_start_render();
@@ -219,6 +239,7 @@ namespace wirender {
         [[nodiscard]] RenderVulkanUtils::swapchain_support_info create_swapchain_info() const;
         [[nodiscard]] VkSwapchainKHR create_swapchain() const;
         void initialize_swapchain_images(RenderVulkanUtils::swapchain_images&) const;
+        [[nodiscard]] const render_commands& get_applied_commands() const noexcept;
         [[nodiscard]] VkCommandPool create_command_pool() const;
         void allocate_command_buffers(VkCommandBuffer[RENDER_SWAPCHAIN_IMAGE_MAX_COUNT]) const;
         void destroy_swapchain_images(RenderVulkanUtils::swapchain_images&) const;
@@ -236,6 +257,7 @@ namespace wirender {
         VkSampleCountFlagBits rasterizationSampleCount{VK_SAMPLE_COUNT_1_BIT};
         VkCullModeFlagBits cullMode{VK_CULL_MODE_NONE};
         float lineWidth{1.0f};
+        bool clearScreen = false;
     };
     struct shader final {
         private:
@@ -267,7 +289,7 @@ namespace wirender {
         [[nodiscard]] RenderVulkanUtils::uniform_buffers_info create_uniform_buffers(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t) const;
         [[nodiscard]] VkDescriptorSetLayout create_descriptor_set_layout(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t);
         [[nodiscard]] VkDescriptorSet create_descriptor_set(const shader_create_info&, const RenderVulkanUtils::public_spirv_variable_declaration[RENDER_SPIRV_PUBLIC_VARIABLE_MAX_COUNT], uint32_t);
-        [[nodiscard]] VkRenderPass create_render_pass() const;
+        [[nodiscard]] VkRenderPass create_render_pass(const shader_create_info&) const;
         [[nodiscard]] VkPipelineLayout create_pipeline_layout() const;
         [[nodiscard]] VkPipeline create_pipeline(const shader_create_info&) const;
     };
@@ -290,6 +312,7 @@ namespace wirender {
         shader_builder& set_polygon_mode(VkPolygonMode);
         shader_builder& set_rasterization_sample_count(VkSampleCountFlagBits);
         shader_builder& set_cull_mode(VkCullModeFlagBits);
+        shader_builder& set_clear_screen(bool);
         [[nodiscard]] shader build() const;
     };
     struct buffer_create_info {

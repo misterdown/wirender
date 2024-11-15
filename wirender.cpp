@@ -59,6 +59,7 @@ namespace wirender {
         #endif // defined __WIN32
     };
 };
+
 render_manager::render_manager(const window_info& windowInfo, bool enableValidation) : 
         windowInfo(windowInfo),
         vulkanInstance(0),
@@ -75,6 +76,7 @@ render_manager::render_manager(const window_info& windowInfo, bool enableValidat
         currentShader{},
         bindedBuffer{},
         imageIndex(0),
+        appliedCommands{},
         validationEnable(enableValidation) {
 
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
@@ -118,7 +120,9 @@ render_manager::render_manager(render_manager&& other) :
         swapchainImages(other.swapchainImages),
         commandPool(other.commandPool),
         syncObject(other.syncObject),
-        imageIndex(other.imageIndex) {
+        imageIndex(other.imageIndex),
+        appliedCommands{other.appliedCommands},
+        validationEnable(other.validationEnable) {
 
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i)
         commandBuffers[i] = other.commandBuffers[i];
@@ -155,12 +159,45 @@ render_manager::~render_manager() {
 
     set_members_zero();
 }
-render_manager& render_manager::clear_command_list() {
+render_manager& render_manager::set_commands(const render_commands& commands) {
+    appliedCommands.count = 0;
+
+    for (uint32_t i = 0; i < commands.count; ++i) {
+        const render_command& current = commands.commands[i];
+
+        switch (current.commandType) {
+            case RENDER_COMMAND_TYPE_CLEAR_COMMAND_BUFFERS  : clear_command_buffers();  break;
+            case RENDER_COMMAND_TYPE_SET_SHADER             : set_shader(current.data.activeShaderState); break;
+            case RENDER_COMMAND_TYPE_BIND_BUFFER            : bind_buffer(current.data.bindedBufferState); break;
+            case RENDER_COMMAND_TYPE_START_RECORD           : start_record(); break;
+            case RENDER_COMMAND_TYPE_RECORD_UPDATE_SCISSOR  : record_update_scissor(); break;
+            case RENDER_COMMAND_TYPE_RECORD_UPDATE_VIEWPORT : record_update_viewport(); break;
+            case RENDER_COMMAND_TYPE_RECORD_START_RENDER    : record_start_render(); break;
+            case RENDER_COMMAND_TYPE_RECORD_DRAW_VERTECES   : record_draw_verteces(current.data.drawData[0], current.data.drawData[1], current.data.drawData[2]); break;
+            case RENDER_COMMAND_TYPE_RECORD_DRAW_INDEXED    : record_draw_indexed(current.data.drawData[0], current.data.drawData[1], current.data.drawData[2]); break;
+            case RENDER_COMMAND_TYPE_RECORD_END_RENDER      : record_end_render(); break;
+            case RENDER_COMMAND_TYPE_END_RECORD             : end_record(); break;
+            
+        default:
+            break;
+        }
+    }
+    return *this;
+}
+render_manager& render_manager::clear_command_buffers() {
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i)
         vkResetCommandBuffer(commandBuffers[i], static_cast<VkFlags>(0));
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_CLEAR_COMMAND_BUFFERS;
+        ++appliedCommands.count;
+    }
     return *this;
 }
 render_manager& render_manager::start_record() {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_START_RECORD;
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i) {
@@ -187,6 +224,10 @@ render_manager& render_manager::start_record() {
     return *this;
 }
 render_manager& render_manager::record_update_viewport() {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_RECORD_UPDATE_VIEWPORT;
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i) {
@@ -197,6 +238,10 @@ render_manager& render_manager::record_update_viewport() {
     return *this;
 }
 render_manager& render_manager::record_update_scissor() {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_RECORD_UPDATE_SCISSOR;
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i) {
@@ -207,6 +252,10 @@ render_manager& render_manager::record_update_scissor() {
     return *this;
 }
 render_manager& render_manager::record_start_render() {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_RECORD_START_RENDER;
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i) {
@@ -228,6 +277,15 @@ render_manager& render_manager::record_start_render() {
     return *this;
 }
 render_manager& render_manager::record_draw_verteces(uint32_t vertexCount, uint32_t offset, uint32_t instanceCount) {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        render_command& current = appliedCommands.commands[appliedCommands.count];
+        current.commandType = RENDER_COMMAND_TYPE_RECORD_DRAW_VERTECES;
+        current.data.drawData[0] = vertexCount;
+        current.data.drawData[1] = offset;
+        current.data.drawData[2] = instanceCount;
+
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i) {
@@ -242,7 +300,16 @@ render_manager& render_manager::record_draw_verteces(uint32_t vertexCount, uint3
 
     return *this;
 }
-render_manager& render_manager::record_draw_indexed(uint32_t vertexCount, uint32_t offset, uint32_t instanceCount) {
+render_manager& render_manager::record_draw_indexed(uint32_t indexCount, uint32_t offset, uint32_t instanceCount) {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        render_command& current = appliedCommands.commands[appliedCommands.count];
+        current.commandType = RENDER_COMMAND_TYPE_RECORD_DRAW_VERTECES;
+        current.data.drawData[0] = indexCount;
+        current.data.drawData[1] = offset;
+        current.data.drawData[2] = instanceCount;
+
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i) {
@@ -253,12 +320,16 @@ render_manager& render_manager::record_draw_indexed(uint32_t vertexCount, uint32
         vkCmdBindVertexBuffers(commandBuffers[i],0,1, &bindedBuffer.buffer, offsets);
         vkCmdBindIndexBuffer(commandBuffers[i], bindedBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdDraw(commandBuffers[i], vertexCount, instanceCount, 0, 0);
+        vkCmdDraw(commandBuffers[i], indexCount, instanceCount, 0, 0);
     }
 
     return *this;
 }
 render_manager& render_manager::record_end_render() {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_RECORD_END_RENDER;
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i)
@@ -267,6 +338,10 @@ render_manager& render_manager::record_end_render() {
     return *this;
 }
 render_manager& render_manager::end_record() {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        appliedCommands.commands[appliedCommands.count].commandType = RENDER_COMMAND_TYPE_END_RECORD;
+        ++appliedCommands.count;
+    }
     if ((swapchainSupportInfo.extent.width == 0) || (swapchainSupportInfo.extent.height == 0))
         return *this;
     for (uint32_t i = 0; i < swapchainImages.imageCount; ++i)
@@ -276,6 +351,8 @@ render_manager& render_manager::end_record() {
 }
 render_manager& render_manager::resize() {
     const VkAllocationCallbacks* allocationCallbacks = nullptr;
+
+    vkDeviceWaitIdle(logicalDevice);
 
     destroy_swapchain_images(swapchainImages);
     if (swapchain != 0)
@@ -292,13 +369,31 @@ render_manager& render_manager::resize() {
     swapchain = create_swapchain();
     initialize_swapchain_images(swapchainImages);
 
+    // clear_command_buffers();
+    const render_commands oldCommands = appliedCommands;
+    set_commands(oldCommands);
+
     return *this;
 }
 render_manager& render_manager::set_shader(const RenderVulkanUtils::active_shader_state& newCurrentShader) {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        render_command& current = appliedCommands.commands[appliedCommands.count];
+        current.commandType = RENDER_COMMAND_TYPE_SET_SHADER;
+        current.data.activeShaderState = newCurrentShader;
+
+        ++appliedCommands.count;
+    }
     currentShader = newCurrentShader;
     return *this;
 }
 render_manager& render_manager::bind_buffer(const RenderVulkanUtils::binded_buffer_state& newBindedBuffer) {
+    if (appliedCommands.count < RENDER_COMMAND_MAX_COUNT) {
+        render_command& current = appliedCommands.commands[appliedCommands.count];
+        current.commandType = RENDER_COMMAND_TYPE_BIND_BUFFER;
+        current.data.bindedBufferState = newBindedBuffer;
+
+        ++appliedCommands.count;
+    }
     bindedBuffer = newBindedBuffer;
     return *this;
 }
@@ -345,6 +440,7 @@ render_manager& render_manager::execute() {
     return *this;
 }
 void render_manager::set_members_zero() {
+    appliedCommands.count = 0;
     syncObject.semaphore = 0;
     syncObject.fence = 0;
     commandPool = 0;
