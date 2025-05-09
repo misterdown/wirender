@@ -62,7 +62,7 @@ HWND create_window(HINSTANCE hInstance) {
     wc.lpszClassName = "wienderWindowClass";
     RegisterClass(&wc);
 
-    return CreateWindow(wc.lpszClassName, "wiender Window", WS_OVERLAPPEDWINDOW,
+    return CreateWindow(wc.lpszClassName, "wiender Window", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
                        0, 0, 800, 600, nullptr, nullptr, hInstance, nullptr);
 }
 
@@ -70,13 +70,13 @@ HWND create_window(HINSTANCE hInstance) {
 void fill_buffer(buffer* bf) {
     vertex* verteces = (vertex*)bf->map();
 
-    verteces[0].pos[0] = -1.0f,    verteces[0].pos[1] = -1.0f;
-    verteces[1].pos[0] = -1.0f,    verteces[1].pos[1] = 1.0f;
-    verteces[2].pos[0] = 1.0f,     verteces[2].pos[1] = 1.0f;
+    verteces[0].pos[0] = -1.0f, verteces[0].pos[1] = -1.0f;
+    verteces[1].pos[0] = -1.0f, verteces[1].pos[1] = 1.0f;
+    verteces[2].pos[0] = 1.0f,  verteces[2].pos[1] = 1.0f;
 
-    verteces[0].uv[0] = 0.0f,       verteces[0].uv[1] = 0.0f;
-    verteces[1].uv[0] = 0.0f,       verteces[1].uv[1] = 1.0f;
-    verteces[2].uv[0] = 1.0f,     verteces[2].uv[1] = 1.0f;
+    verteces[0].uv[0] = 0.0f,   verteces[0].uv[1] = 0.0f;
+    verteces[1].uv[0] = 0.0f,   verteces[1].uv[1] = 1.0f;
+    verteces[2].uv[0] = 1.0f,   verteces[2].uv[1] = 1.0f;
 
     bf->update_data();
     bf->unmap();
@@ -101,23 +101,28 @@ void fill_texture(texture* tetr) {
 int main() {
     HINSTANCE hInstance = GetModuleHandle(nullptr);
     HWND hWnd = create_window(hInstance);
-
+    
     if (hWnd == nullptr) {
-        std::cerr << "tests/basic_test failed to create window" << '\n';
+        std::cerr << "test failed on creating window" << '\n';
         return 1;
     }
-
+    std::cout << "window created\n";
+    
     try {
         auto wienderer = create_wienderer(backend_type::VULKAN, windows_window_handle(hWnd, hInstance));
+        std::cout << "wienderer created\n";
+
         auto vertexgpub = wienderer->create_buffer(buffer::type::GPU_SIDE_VERTEX, sizeof(vertex) * 128);
+        std::cout << "vertexgpub created\n";
+
         fill_buffer(vertexgpub.get());
         vertexgpub->bind();
-
+        
         auto shader = wienderer->create_shader(
             shader::create_info(
                 std::vector<stage> {
-                    stage(stage::kind::VERTEX, read_binary_file("../assets/texturev.spirv")),
-                    stage(stage::kind::FRAGMENT, read_binary_file("../assets/texturef.spirv"))
+                    stage(stage::kind::VERTEX, read_binary_file("assets/texturev.spirv")),
+                    stage(stage::kind::FRAGMENT, read_binary_file("assets/texturef.spirv"))
                 },
                 std::vector<vertex_input_attribute>{
                     vertex_input_attribute(vertex_input_attribute::format::FLOAT_VEC2, 0, 0, 0),
@@ -128,34 +133,36 @@ int main() {
                 cull_mode::NONE,
                 true,
                 false
-            ));
-            
+            )
+        );
+        std::cout << "shader created\n";
+        
         vec2* g = (vec2*)shader->get_uniform_buffer_info(0).data;
         g[0][0] = 0.0f, g[0][1] = 0.0f;
         g[1][0] = 1.0f, g[1][1] = 1.0f;
-
+        std::cout << "uniform buffer filled\n";
+        
         shader->set();
-        std::cout << "tests/basic_test some stuffs were created" << '\n';
         auto tetrn = wienderer->create_texture(
             texture::create_info(
                 texture::sampler_filter::NEAREST,
                 texture::extent(10, 10)
             )
         );
-        std::cout << "tests/basic_test nearest filter texture was created" << '\n';
-
+        std::cout << "nearest texture created\n";
+        
         auto tetrl = wienderer->create_texture(
             texture::create_info(
                 texture::sampler_filter::LINEAR,
                 texture::extent(10, 10)
             )
         );
+        std::cout << "linear texture created\n";
         shader->bind_texture(1, 0, tetrl.get());
-        std::cout << "tests/basic_test linear filter texture was created" << '\n';
 
         fill_texture(tetrn.get());
         fill_texture(tetrl.get());
-        std::cout << "tests/basic_test textures datas was updated" << '\n';
+        std::cout << "textures filled\n";
 
         shader->bind_texture(1, 0, tetrl.get());
 
@@ -164,8 +171,7 @@ int main() {
         wienderer->draw_verteces(3, 0, 1);
         wienderer->end_render();
         wienderer->end_record();
-        auto defaultFrame = wienderer->get_commands_frame();
-        std::cout << "tests/basic_test recording was begun and ended" << '\n';
+        std::cout << "recording was begun and ended\n";
 
         MSG msg;
         auto lastFrameTime = std::chrono::high_resolution_clock::now();
@@ -176,6 +182,8 @@ int main() {
         
         windowIsOpen = true;
         ShowWindow(hWnd, SW_SHOW);
+        std::cout << "hello!\n";
+
         bool linear = true;
         while (windowIsOpen) {
             auto start = std::chrono::high_resolution_clock::now();
@@ -210,10 +218,10 @@ int main() {
         }
 
     } catch (const std::exception& e) {
-        std::cerr << "tests/basic_test test failed: " << e.what() << '\n';
+        std::cerr << "test failed: " << e.what() << '\n';
         return 1;
     }
 
-    std::cout << "tests/basic_test passed" << '\n';
+    std::cout << "passed\n";
     return 0;
 }

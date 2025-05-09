@@ -15,7 +15,7 @@ A small tool for drawing basic shapes using the Vulkan API.
 ## Requirements
 
 - **Vulkan SDK**: Ensure you have the Vulkan SDK installed. Because without it, you're just wasting your time.
-- **C++11 Compiler**: A C++17? compatible compiler is required.
+- **C++11 Compiler**: A C++11 compatible compiler is required.
 - **Operating System**: Windows or Linux. Mac users don't deserve nice things.
 
 ## Installation
@@ -25,14 +25,19 @@ A small tool for drawing basic shapes using the Vulkan API.
     ```sh
     git clone https://github.com/misterdown/wirender.git
     cd wirender
-    ... meh
-    too lazy to do real projects
+    ```
+3. **Build**
+    ```sh
+    mkdir build
+    cd build
+    cmake ..
+    cmake --build ./
     ```
 
 
 ## Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request. Because we all LOVE fixing bugs.
+Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request. Because we ALL LOVE fixing bugs.
 
 ## License
 
